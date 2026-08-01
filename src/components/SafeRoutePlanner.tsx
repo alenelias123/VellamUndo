@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Clock3, Navigation2, Route, Search, ShieldCheck } from "lucide-react";
 import { calculateRoadRoutes, geocodeDestination, type SearchResultPlace } from "@/lib/routing";
-import type { Coordinates, FloodReport, RouteOption } from "@/lib/types";
+import type { Coordinates, Incident, RouteOption } from "@/lib/types";
 
 type SafeRoutePlannerProps = {
   userLocation: Coordinates | null;
-  reports: FloodReport[];
+  incidents: Incident[];
   activeRoute?: RouteOption;
   onDestinationSelect: (place: SearchResultPlace | null) => void;
   onRouteChange: (route?: RouteOption) => void;
@@ -15,7 +15,7 @@ type SafeRoutePlannerProps = {
 
 export function SafeRoutePlanner({
   userLocation,
-  reports,
+  incidents,
   activeRoute,
   onDestinationSelect,
   onRouteChange
@@ -56,7 +56,7 @@ export function SafeRoutePlanner({
     // Calculate OSRM routes
     setIsCalculating(true);
     try {
-      const computedRoutes = await calculateRoadRoutes(origin, place.coordinates, reports);
+      const computedRoutes = await calculateRoadRoutes(origin, place.coordinates, incidents);
       setRoutes(computedRoutes);
       if (computedRoutes.length > 0) {
         onRouteChange(computedRoutes[0]);

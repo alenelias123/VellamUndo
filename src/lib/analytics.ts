@@ -1,13 +1,14 @@
-import { getReportConfidence, severityRank } from "./floodReports";
 import { getAvailableCapacity } from "./reliefCenters";
-import type { AnalyticsSnapshot, FloodReport, HelpRequest, ReliefCenter } from "./types";
+import type { AnalyticsSnapshot, Incident, HelpRequest, ReliefCenter } from "./types";
 
 export function buildAnalyticsSnapshot(
-  reports: FloodReport[],
+  incidents: Incident[],
   helpRequests: HelpRequest[],
   reliefCenters: ReliefCenter[]
 ): AnalyticsSnapshot {
-  const blockedRoads = reports.filter((report) => severityRank[report.severity] >= 3).length;
+  const activeIncidents = incidents.filter((inc) => inc.status === "active" || inc.status === "receding");
+  const blockedRoads = activeIncidents.filter((inc) => inc.severity === "NOT_PASSABLE" || inc.severity === "WAIST_DEEP").length;
+  const totalReports = incidents.reduce((sum, inc) => sum + (inc.reports?.length || 0), 0);
   const openHelpRequests = helpRequests.filter((request) => request.status !== "completed").length;
   const criticalHelpRequests = helpRequests.filter(
     (request) => request.priority === "critical" && request.status !== "completed"
@@ -17,15 +18,15 @@ export function buildAnalyticsSnapshot(
     0
   );
   const averageConfidence =
-    reports.length === 0
+    activeIncidents.length === 0
       ? 0
       : Math.round(
-          reports.reduce((total, report) => total + getReportConfidence(report), 0) /
-            reports.length
+          activeIncidents.reduce((total, inc) => total + inc.confidence, 0) /
+            activeIncidents.length
         );
 
   return {
-    totalReports: reports.length,
+    totalReports,
     blockedRoads,
     openHelpRequests,
     criticalHelpRequests,

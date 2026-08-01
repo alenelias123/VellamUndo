@@ -1,377 +1,364 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  Compass,
-  Crosshair,
-  LogIn,
-  LogOut,
-  MapPin,
+  Ambulance,
+  Building2,
+  CircleDot,
+  LifeBuoy,
   MapPinned,
-  Navigation,
   Navigation2,
-  Search,
-  ShieldAlert,
+  RadioTower,
   ShieldCheck,
-  UserCheck
+  AlertTriangle
 } from "lucide-react";
-import { AuthModal } from "@/components/AuthModal";
+import { ReliefCentersPanel } from "@/components/ReliefCentersPanel";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
+import { HelpRequestPanel } from "@/components/HelpRequestPanel";
+import { VolunteerDashboard } from "@/components/VolunteerDashboard";
+import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
-import { calculateRoadRoutes, geocodeDestination, type SearchResultPlace } from "@/lib/routing";
+import { defaultDistrictSlug, districts, getDistrictBySlug } from "@/lib/districts";
+import { severityRank, severityMeta, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
 import type { Coordinates, RouteOption } from "@/lib/types";
 
 const FloodMap = dynamic(() => import("@/components/FloodMap").then((mod) => mod.FloodMap), {
   ssr: false,
-  loading: () => <div className="map-loading">Loading Google Map Engine...</div>
+  loading: () => <div className="map-loading bg-gray-50 flex items-center justify-center h-full text-xs font-semibold text-gray-500">Loading Leaflet Map...</div>
 });
 
-type ActivePanel = "none" | "search" | "report";
+type ActivePanel = "report" | "route" | "help" | "volunteers" | "centers";
+
+const panelItems: Array<{
+  id: ActivePanel;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { id: "report", label: "Report", icon: MapPinned },
+  { id: "route", label: "Route", icon: Navigation2 },
+  { id: "help", label: "Help", icon: LifeBuoy },
+  { id: "volunteers", label: "Volunteers", icon: RadioTower },
+  { id: "centers", label: "Centers", icon: Building2 }
+];
 
 export default function HomeClient() {
   const {
-    reports,
-    userSession,
-    login,
-    logout,
+    incidents,
+    helpRequests,
+    reliefCenters,
+    offlineQueue,
+    isSyncing,
+    analytics,
     addReport,
-    deleteReport,
-    verifyReport
+    verifyIncident,
+    addHelpRequest,
+    updateHelpStatus,
+    resetDemoData
   } = useEmergencyStore();
 
-  // User Realtime Geolocation State
-  const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
-  const [geoError, setGeoError] = useState<string | null>(null);
-  const [mapCenter, setMapCenter] = useState<Coordinates>({ lat: 9.9769, lng: 76.2824 }); // Default Kochi
-
-  // UI state
-  const [activePanel, setActivePanel] = useState<ActivePanel>("search");
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [selectedReportId, setSelectedReportId] = useState<string | undefined>();
-  const [pendingLocation, setPendingLocation] = useState<Coordinates | null>(null);
-  const [destinationLocation, setDestinationLocation] = useState<Coordinates | null>(null);
+  const [activeDistrictSlug, setActiveDistrictSlug] = useState(defaultDistrictSlug);
+  const [activePanel, setActivePanel] = useState<ActivePanel>("report");
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
+  const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
 
-  // Top destination search input state
-  const [topSearchQuery, setTopSearchQuery] = useState("");
-  const [topSearchResults, setTopSearchResults] = useState<SearchResultPlace[]>([]);
-  const [isSearchingTop, setIsSearchingTop] = useState(false);
+  const activeDistrict = getDistrictBySlug(activeDistrictSlug);
+  
+  const selectedIncident = useMemo(() => {
+    return incidents.find((inc) => inc.id === selectedIncidentId);
+  }, [incidents, selectedIncidentId]);
 
-  // 1. Fetch Realtime Geolocation of User
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeoError("Geolocation is not supported by your browser.");
-      return;
-    }
+  // Center map on selected incident, pending coordinate, or default district center
+  const mapCenter = useMemo(() => {
+    if (selectedIncident) return selectedIncident.coordinates;
+    if (pendingLocation) return pendingLocation;
+    return activeDistrict.center;
+  }, [selectedIncident, pendingLocation, activeDistrict]);
 
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const coords: Coordinates = {
-          lat: Number(position.coords.latitude.toFixed(5)),
-          lng: Number(position.coords.longitude.toFixed(5))
-        };
-        setUserLocation(coords);
-        // On initial load, set center to user location
-        setMapCenter((prev) => (prev.lat === 9.9769 && prev.lng === 76.2824 ? coords : prev));
-      },
-      (err) => {
-        console.warn("Geolocation watch error:", err.message);
-        setGeoError("Unable to retrieve your location.");
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 10000
-      }
-    );
+  // Calculate watchlist (highest severity active incidents)
+  const severeIncidents = useMemo(() => {
+    return [...incidents]
+      .filter((inc) => inc.status === "active" || inc.status === "receding")
+      .sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || b.confidence - a.confidence)
+      .slice(0, 4);
+  }, [incidents]);
 
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  // Calculate latest update rollup
+  const latestUpdatesRollup = useMemo(() => {
+    return [...incidents]
+      .filter((inc) => inc.status !== "archived")
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 4);
+  }, [incidents]);
 
-  // Handle map click to select a point
   function handlePickLocation(coordinates: Coordinates) {
     setPendingLocation(coordinates);
-    setMapCenter(coordinates);
+    setSelectedIncidentId(undefined); // close drawer to prioritize reporting
+    setActivePanel("report");
   }
 
-  // Recenter to user's live position
-  function handleRecenterUser() {
-    if (userLocation) {
-      setMapCenter({ ...userLocation });
-    } else {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        const coords = {
-          lat: Number(pos.coords.latitude.toFixed(5)),
-          lng: Number(pos.coords.longitude.toFixed(5))
-        };
-        setUserLocation(coords);
-        setMapCenter(coords);
-      });
+  function handleRouteChange(route?: RouteOption) {
+    setActiveRoute(route);
+    if (route) {
+      setSelectedIncidentId(undefined);
     }
   }
-
-  // Handle top search submission
-  async function handleTopSearchSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!topSearchQuery.trim()) return;
-
-    setIsSearchingTop(true);
-    try {
-      const results = await geocodeDestination(topSearchQuery);
-      setTopSearchResults(results);
-      if (results.length > 0) {
-        handleSelectTopDestination(results[0]);
-      }
-    } finally {
-      setIsSearchingTop(false);
-    }
-  }
-
-  // Select destination from search result
-  async function handleSelectTopDestination(place: SearchResultPlace) {
-    setDestinationLocation(place.coordinates);
-    setMapCenter(place.coordinates);
-    setTopSearchResults([]);
-    setTopSearchQuery(place.name);
-
-    // Compute route from user location (or default origin) to destination
-    const origin = userLocation || { lat: 9.9769, lng: 76.2824 };
-    const routes = await calculateRoadRoutes(origin, place.coordinates, reports);
-    if (routes.length > 0) {
-      setActiveRoute(routes[0]);
-      setActivePanel("search");
-    }
-  }
-
-  // Handle Report Flood Click
-  function handleReportClick() {
-    if (!userSession) {
-      setIsAuthModalOpen(true);
-    } else {
-      setActivePanel("report");
-    }
-  }
-
-  const selectedReport = reports.find((r) => r.id === selectedReportId);
-  const isAdmin = userSession?.role === "admin";
 
   return (
-    <div className="google-maps-app">
-      {/* Top Google Maps Floating Search Bar */}
-      <header className="gmaps-topbar">
-        <div className="gmaps-brand">
-          <ShieldCheck size={24} className="brand-logo" />
-          <span className="brand-title">Vellam Undo</span>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand-lockup">
+          <span className="brand-mark">
+            <ShieldCheck size={22} />
+          </span>
+          <div>
+            <p className="eyebrow">Kerala flood response</p>
+            <h1>Vellam Undo</h1>
+          </div>
         </div>
 
-        <form className="gmaps-search-box" onSubmit={handleTopSearchSubmit}>
-          <Search size={18} className="search-icon" />
-          <input
-            type="text"
-            placeholder="Search destination (e.g. Aluva, Marine Drive, Thrissur)..."
-            value={topSearchQuery}
-            onChange={(e) => setTopSearchQuery(e.target.value)}
-          />
-          <button type="submit" className="destination-search-button" disabled={isSearchingTop}>
-            {isSearchingTop ? "Searching..." : "Search Destination"}
-          </button>
-        </form>
-
-        {/* User / Auth Controls */}
-        <div className="gmaps-auth-controls">
-          {userSession ? (
-            <div className="user-badge-pill">
-              {isAdmin ? (
-                <span className="admin-tag">
-                  <ShieldAlert size={14} /> Admin
-                </span>
-              ) : (
-                <span className="user-tag">
-                  <UserCheck size={14} /> Citizen
-                </span>
-              )}
-              <span className="user-email">{userSession.email.split("@")[0]}</span>
-              <button type="button" className="logout-btn" title="Sign Out" onClick={logout}>
-                <LogOut size={15} />
-              </button>
+        <div className="topbar-controls flex items-center gap-3">
+          {offlineQueue.length > 0 ? (
+            <div className="bg-amber-100 border border-amber-300 rounded px-2.5 py-1 text-[11px] font-bold text-amber-800 flex items-center gap-1.5 animate-pulse shadow-sm">
+              <AlertTriangle size={12} />
+              <span>{offlineQueue.length} queued offline</span>
             </div>
-          ) : (
-            <button
-              type="button"
-              className="login-btn primary-action"
-              onClick={() => setIsAuthModalOpen(true)}
-            >
-              <LogIn size={16} /> Sign In
-            </button>
-          )}
-        </div>
+          ) : null}
 
-        {/* Autocomplete Dropdown */}
-        {topSearchResults.length > 0 ? (
-          <ul className="gmaps-search-dropdown">
-            {topSearchResults.map((place) => (
-              <li key={place.id}>
-                <button type="button" onClick={() => handleSelectTopDestination(place)}>
-                  <strong>📍 {place.name}</strong>
-                  <small>{place.fullName}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+          {isSyncing ? (
+            <div className="bg-blue-100 border border-blue-300 rounded px-2.5 py-1 text-[11px] font-bold text-blue-800 flex items-center gap-1.5 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+              <span>Syncing queue...</span>
+            </div>
+          ) : null}
+
+          <label className="district-select">
+            District
+            <select
+              value={activeDistrictSlug}
+              onChange={(event) => {
+                setActiveDistrictSlug(event.target.value);
+                setSelectedIncidentId(undefined);
+                setPendingLocation(undefined);
+              }}
+            >
+              {districts.map((district) => (
+                <option key={district.slug} value={district.slug}>
+                  {district.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="signal-pill">
+            <CircleDot size={14} className="text-green-500 fill-green-500 animate-pulse" />
+            Live Network Status
+          </div>
+        </div>
       </header>
 
-      {/* Main Fullscreen Map Viewport */}
-      <main className="gmaps-viewport">
-        <FloodMap
-          center={mapCenter}
-          userLocation={userLocation}
-          reports={reports}
-          selectedReportId={selectedReportId}
-          activeRoute={activeRoute}
-          destinationLocation={destinationLocation}
-          pendingLocation={pendingLocation}
-          isAdmin={isAdmin}
-          onSelectReport={(reportId) => {
-            setSelectedReportId(reportId);
-            setActivePanel("report");
-          }}
-          onDeleteReport={(reportId) => deleteReport(reportId)}
-          onPickLocation={handlePickLocation}
-        />
-
-        {/* Floating Google Maps Quick Action Bar */}
-        <div className="gmaps-floating-actions">
-          <button
-            type="button"
-            className="floating-fab recenter-fab"
-            title="Recenter to my location"
-            onClick={handleRecenterUser}
-          >
-            <Crosshair size={20} />
-          </button>
-
-          <button
-            type="button"
-            className={`floating-fab nav-fab ${activePanel === "search" ? "active" : ""}`}
-            title="Navigation Directions"
-            onClick={() => setActivePanel(activePanel === "search" ? "none" : "search")}
-          >
-            <Navigation2 size={20} />
-          </button>
-
-          <button
-            type="button"
-            className={`floating-fab report-fab ${activePanel === "report" ? "active" : ""}`}
-            title="Report Flooded Road"
-            onClick={handleReportClick}
-          >
-            <MapPinned size={20} />
-            <span className="fab-label">Report Flood</span>
-          </button>
-        </div>
-
-        {/* Live GPS Status Chip */}
-        <div className="gmaps-gps-chip">
-          <span className={`gps-dot ${userLocation ? "active" : "searching"}`}></span>
-          <span>
-            {userLocation
-              ? `GPS Live: ${userLocation.lat}, ${userLocation.lng}`
-              : geoError || "Fetching live location..."}
-          </span>
-        </div>
-
-        {/* Active Route Summary Floating Sheet */}
-        {activeRoute ? (
-          <div className="gmaps-route-card">
-            <div className="route-card-header">
-              <div>
-                <span className="route-tag">Active Directions</span>
-                <h3>{activeRoute.name}</h3>
-              </div>
+      <main className="workspace">
+        <nav className="mode-rail" aria-label="Operations">
+          {panelItems.map((item) => {
+            const Icon = item.icon;
+            return (
               <button
                 type="button"
-                className="close-route-btn"
+                key={item.id}
+                className={activePanel === item.id && !selectedIncidentId ? "is-active" : ""}
                 onClick={() => {
-                  setActiveRoute(undefined);
-                  setDestinationLocation(null);
+                  setSelectedIncidentId(undefined); // close drawer to switch modes
+                  setActivePanel(item.id);
                 }}
+                title={item.label}
               >
-                ✕
+                <Icon size={20} />
+                <span>{item.label}</span>
               </button>
-            </div>
-            <div className="route-metrics">
-              <span className="metric">🚗 {activeRoute.distanceKm} km</span>
-              <span className="metric">⏱️ {activeRoute.estimatedMinutes} mins</span>
-              <span
-                className={`metric risk ${
-                  activeRoute.floodExposure > 3 ? "high-risk" : "low-risk"
-                }`}
-              >
-                🛡️ Flood Exposure: {activeRoute.floodExposure}
-              </span>
-            </div>
-            {activeRoute.warnings.length > 0 ? (
-              <p className="route-warning">{activeRoute.warnings[0]}</p>
-            ) : null}
+            );
+          })}
+        </nav>
+
+        <section className="map-stage" aria-label="Flood response map">
+          <div className="map-frame">
+            <FloodMap
+              center={mapCenter}
+              incidents={incidents}
+              helpRequests={helpRequests}
+              reliefCenters={reliefCenters}
+              selectedIncidentId={selectedIncidentId}
+              activeRoute={activeRoute}
+              pendingLocation={pendingLocation}
+              onSelectIncident={(id) => {
+                setSelectedIncidentId(id);
+                setPendingLocation(undefined); // clear active reporting pins
+              }}
+              onPickLocation={handlePickLocation}
+            />
           </div>
-        ) : null}
 
-        {/* Sliding Operations Side Panel */}
-        {activePanel !== "none" ? (
-          <aside className="gmaps-side-panel">
-            <button
-              type="button"
-              className="close-panel-btn"
-              onClick={() => setActivePanel("none")}
-            >
-              ✕
-            </button>
+          <div className="map-summary">
+            <Metric label="Incidents Logged" value={incidents.filter(i => i.status !== "archived").length} />
+            <Metric label="Blocked Roads" value={analytics.blockedRoads} tone="danger" />
+            <Metric label="SOS Help Requests" value={analytics.openHelpRequests} tone="warning" />
+            <Metric label="Relief Camp Beds" value={analytics.reliefBedsAvailable} tone="safe" />
+          </div>
 
-            {activePanel === "search" ? (
-              <SafeRoutePlanner
-                userLocation={userLocation}
-                reports={reports}
-                activeRoute={activeRoute}
-                onDestinationSelect={(place) => {
-                  if (place) {
-                    setDestinationLocation(place.coordinates);
-                    setMapCenter(place.coordinates);
-                  }
-                }}
-                onRouteChange={(route) => setActiveRoute(route)}
-              />
-            ) : null}
+          <aside className="map-intel" aria-label="Flood intelligence">
+            <div className="intel-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Priority Areas</p>
+                  <h2>Watch list</h2>
+                </div>
+                <Ambulance size={18} className="text-red-500" />
+              </div>
+              {severeIncidents.length === 0 ? (
+                <p className="text-xs text-gray-400 p-2 italic">No active priority hazards.</p>
+              ) : (
+                severeIncidents.map((incident) => {
+                  const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: "📍" };
+                  const color = severityColorMeta[incident.severity]?.color || "#7f7f7f";
+                  return (
+                    <button
+                      type="button"
+                      className="intel-row text-left hover:bg-gray-50 flex items-center gap-2 p-2 border-b border-gray-100"
+                      key={incident.id}
+                      onClick={() => {
+                        setSelectedIncidentId(incident.id);
+                        setPendingLocation(undefined);
+                      }}
+                    >
+                      <span
+                        className="severity-dot shrink-0"
+                        style={{ background: color }}
+                      />
+                      <span className="truncate">
+                        <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
+                        <small className="text-[10px] text-gray-500 font-semibold flex items-center gap-0.5">
+                          <span>{typeMeta.icon}</span>
+                          <span>{incident.type}</span>
+                        </small>
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
 
-            {activePanel === "report" ? (
-              <ReportPanel
-                activeDistrictSlug="ernakulam"
-                pendingLocation={pendingLocation || undefined}
-                selectedReport={selectedReport}
-                reports={reports}
-                userSession={userSession}
-                onRequestLogin={() => setIsAuthModalOpen(true)}
-                onSubmit={(input) => addReport(input)}
-                onDeleteReport={(reportId) => deleteReport(reportId)}
-                onVerify={verifyReport}
-                onSelectReport={setSelectedReportId}
-              />
-            ) : null}
+            <div className="intel-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Incident Feed</p>
+                  <h2>Latest updates</h2>
+                </div>
+              </div>
+              {latestUpdatesRollup.length === 0 ? (
+                <p className="text-xs text-gray-400 p-2 italic">No updates reported.</p>
+              ) : (
+                latestUpdatesRollup.map((incident) => {
+                  const color = severityColorMeta[incident.severity]?.color || "#7f7f7f";
+                  return (
+                    <button
+                      type="button"
+                      className="intel-row text-left hover:bg-gray-50 flex items-center gap-2 p-2 border-b border-gray-100"
+                      key={incident.id}
+                      onClick={() => {
+                        setSelectedIncidentId(incident.id);
+                        setPendingLocation(undefined);
+                      }}
+                    >
+                      <span
+                        className="severity-dot shrink-0"
+                        style={{ background: color }}
+                      />
+                      <span className="truncate">
+                        <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
+                        <small className="text-[10px] text-gray-400 font-mono">
+                          Updated {new Date(incident.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </small>
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </aside>
-        ) : null}
-      </main>
+        </section>
 
-      {/* Auth Modal for Log In / Sign Up & Admin Authentication */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onLogin={(email, role) => {
-          login(email, role);
-          setActivePanel("report");
-        }}
-      />
+        <aside className="operations-panel">
+          {selectedIncidentId && selectedIncident ? (
+            <IncidentDetailsDrawer
+              incident={selectedIncident}
+              onVerify={verifyIncident}
+              onClose={() => setSelectedIncidentId(undefined)}
+            />
+          ) : (
+            <>
+              {activePanel === "report" ? (
+                <ReportPanel
+                  pendingLocation={pendingLocation}
+                  onPickLocation={handlePickLocation}
+                  onSubmit={addReport}
+                  onResetDemoData={resetDemoData}
+                />
+              ) : null}
+
+              {activePanel === "route" ? (
+                <SafeRoutePlanner
+                  userLocation={pendingLocation || null}
+                  incidents={incidents}
+                  activeRoute={activeRoute}
+                  onDestinationSelect={() => {}}
+                  onRouteChange={handleRouteChange}
+                />
+              ) : null}
+
+              {activePanel === "help" ? (
+                <HelpRequestPanel
+                  activeDistrictSlug={activeDistrictSlug}
+                  pendingLocation={pendingLocation}
+                  requests={helpRequests}
+                  onSubmit={(input) => {
+                    const request = addHelpRequest(input);
+                    setPendingLocation(undefined);
+                    return request;
+                  }}
+                />
+              ) : null}
+
+              {activePanel === "volunteers" ? (
+                <VolunteerDashboard requests={helpRequests} onUpdateStatus={updateHelpStatus} />
+              ) : null}
+
+              {activePanel === "centers" ? (
+                <ReliefCentersPanel
+                  centers={reliefCenters}
+                  activeDistrictSlug={activeDistrictSlug}
+                />
+              ) : null}
+            </>
+          )}
+        </aside>
+      </main>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  label: string;
+  value: number;
+  tone?: "neutral" | "safe" | "warning" | "danger";
+}) {
+  return (
+    <div className={`metric-card metric-card--${tone}`}>
+      <strong>{value}</strong>
+      <span>{label}</span>
     </div>
   );
 }

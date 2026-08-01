@@ -1,35 +1,72 @@
--- Create flood_reports table in Supabase
-create table if not exists public.flood_reports (
-  id text primary key,
+-- Drop legacy tables if they exist
+drop table if exists public.flood_reports cascade;
+
+-- Create incidents table
+create table if not exists public.incidents (
+  id uuid primary key default gen_random_uuid(),
+  type text not null,
+  status text not null check (status in ('active', 'receding', 'resolved', 'archived')),
+  severity text not null check (severity in ('safe', 'waterlogged', 'knee-deep', 'waist-deep', 'not-passable')),
   road_name text not null,
-  district text default 'ernakulam',
-  location_name text not null,
+  landmark text not null,
+  district text not null,
   latitude double precision not null,
   longitude double precision not null,
-  severity text not null check (severity in ('safe', 'waterlogged', 'knee-deep', 'waist-deep', 'not-passable')),
-  water_level_cm integer default 0,
-  description text,
-  image_url text,
-  created_by text default 'Community reporter',
+  confidence integer default 0 check (confidence between 0 and 100),
   created_at timestamptz default now(),
-  confirmations integer default 1,
-  flags integer default 0
+  updated_at timestamptz default now(),
+  resolved_at timestamptz
 );
 
--- Enable Row Level Security (RLS)
-alter table public.flood_reports enable row level security;
+-- Create incident_reports table
+create table if not exists public.incident_reports (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid not null references public.incidents(id) on delete cascade,
+  severity text not null check (severity in ('safe', 'waterlogged', 'knee-deep', 'waist-deep', 'not-passable')),
+  notes text,
+  reporter text default 'Community reporter',
+  created_at timestamptz default now()
+);
 
--- Policy: Allow public read access to everyone
-create policy "Allow public read access"
-  on public.flood_reports for select
-  using (true);
+-- Create incident_images table
+create table if not exists public.incident_images (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid not null references public.incident_reports(id) on delete cascade,
+  image_url text not null,
+  created_at timestamptz default now()
+);
 
--- Policy: Allow authenticated users to insert reports
-create policy "Allow insert for authenticated users"
-  on public.flood_reports for insert
-  with check (true);
+-- Create incident_verifications table
+create table if not exists public.incident_verifications (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid not null references public.incidents(id) on delete cascade,
+  reporter text default 'Community verifier',
+  vote text not null check (vote in ('still-flooded', 'water-rising', 'water-receding', 'road-cleared', 'false-report')),
+  created_at timestamptz default now()
+);
 
--- Policy: Allow delete for admin / authenticated users
-create policy "Allow delete for admin"
-  on public.flood_reports for delete
-  using (true);
+-- Indexes for performance
+create index if not exists idx_incidents_lat_lng on public.incidents(latitude, longitude);
+create index if not exists idx_incidents_status on public.incidents(status);
+create index if not exists idx_incident_reports_incident_id on public.incident_reports(incident_id);
+create index if not exists idx_incident_images_report_id on public.incident_images(report_id);
+create index if not exists idx_incident_verifications_incident_id on public.incident_verifications(incident_id);
+
+-- Enable RLS
+alter table public.incidents enable row level security;
+alter table public.incident_reports enable row level security;
+alter table public.incident_images enable row level security;
+alter table public.incident_verifications enable row level security;
+
+-- Policies for public read
+create policy "Allow public read access for incidents" on public.incidents for select using (true);
+create policy "Allow public read access for reports" on public.incident_reports for select using (true);
+create policy "Allow public read access for images" on public.incident_images for select using (true);
+create policy "Allow public read access for verifications" on public.incident_verifications for select using (true);
+
+-- Policies for insert and updates (allowing all for public/anonymous MVP writes)
+create policy "Allow public insert for incidents" on public.incidents for insert with check (true);
+create policy "Allow public update for incidents" on public.incidents for update using (true);
+create policy "Allow public insert for reports" on public.incident_reports for insert with check (true);
+create policy "Allow public insert for images" on public.incident_images for insert with check (true);
+create policy "Allow public insert for verifications" on public.incident_verifications for insert with check (true);

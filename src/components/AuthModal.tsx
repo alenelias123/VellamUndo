@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { LogIn, ShieldAlert, UserCheck, X } from "lucide-react";
-import type { UserSession } from "@/hooks/useEmergencyStore";
+
 
 type AuthModalProps = {
   isOpen: boolean;

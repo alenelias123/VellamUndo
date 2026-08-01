@@ -1,5 +1,5 @@
 import { severityRank } from "./floodReports";
-import type { Coordinates, FloodReport, RouteOption } from "./types";
+import type { Coordinates, Incident, RouteOption } from "./types";
 
 export type SearchResultPlace = {
   id: string;
@@ -58,7 +58,7 @@ export function haversineDistanceKm(start: Coordinates, end: Coordinates): numbe
 export async function calculateRoadRoutes(
   origin: Coordinates,
   destination: Coordinates,
-  reports: FloodReport[]
+  incidents: Incident[]
 ): Promise<RouteOption[]> {
   const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`;
 
@@ -70,7 +70,7 @@ export async function calculateRoadRoutes(
 
     const data = await response.json();
     if (!data.routes || data.routes.length === 0) {
-      return [buildFallbackDirectRoute(origin, destination, reports)];
+      return [buildFallbackDirectRoute(origin, destination, incidents)];
     }
 
     const routeOptions: RouteOption[] = data.routes.map((route: any, index: number) => {
@@ -83,8 +83,8 @@ export async function calculateRoadRoutes(
 
       const distanceKm = Number((route.distance / 1000).toFixed(1));
       const baseMinutes = Math.round(route.duration / 60);
-      const floodExposure = calculateFloodExposure(coords, reports);
-      const warnings = buildRouteWarnings(coords, reports);
+      const floodExposure = calculateFloodExposure(coords, incidents);
+      const warnings = buildRouteWarnings(coords, incidents);
       const estimatedMinutes = Math.round(baseMinutes + floodExposure * 3);
 
       const isFirst = index === 0;
@@ -115,7 +115,7 @@ export async function calculateRoadRoutes(
     // Check if primary route is flooded. If so, generate an inland bypass if possible.
     const primaryRoute = routeOptions[0];
     if (primaryRoute && primaryRoute.floodExposure > 2.5) {
-      const bypassRoute = buildInlandBypassRoute(origin, destination, reports);
+      const bypassRoute = buildInlandBypassRoute(origin, destination, incidents);
       routeOptions.push(bypassRoute);
     }
 
@@ -127,20 +127,25 @@ export async function calculateRoadRoutes(
     });
   } catch (err) {
     console.warn("OSRM routing failed, falling back to geometric route:", err);
-    return [buildFallbackDirectRoute(origin, destination, reports)];
+    return [buildFallbackDirectRoute(origin, destination, incidents)];
   }
 }
 
-function calculateFloodExposure(route: Coordinates[], reports: FloodReport[]): number {
-  if (!reports || reports.length === 0) return 0;
+function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
+  if (!incidents || incidents.length === 0) return 0;
   let exposure = 0;
 
-  for (const report of reports) {
-    const nearestSegmentDistance = getNearestSegmentDistanceKm(report.coordinates, route);
-    const impactRadiusKm = severityRank[report.severity] >= 3 ? 2.5 : 1.2;
+  for (const incident of incidents) {
+    if (incident.status !== "active" && incident.status !== "receding") {
+      continue;
+    }
+
+    const nearestSegmentDistance = getNearestSegmentDistanceKm(incident.coordinates, route);
+    const rank = severityRank[incident.severity] || 0;
+    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
     if (nearestSegmentDistance < impactRadiusKm) {
       const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
-      exposure += proximity * severityRank[report.severity] * (1 + report.confirmations * 0.1);
+      exposure += proximity * rank * (1 + (incident.reports?.length || 0) * 0.1);
     }
   }
 
@@ -188,35 +193,36 @@ function distancePointToSegmentKm(point: Coordinates, start: Coordinates, end: C
   return Math.hypot(p.x - projection.x, p.y - projection.y);
 }
 
-function buildRouteWarnings(coordinates: Coordinates[], reports: FloodReport[]): string[] {
-  if (!reports || reports.length === 0) {
-    return ["Route clear. No active flood reports logged."];
+function buildRouteWarnings(coordinates: Coordinates[], incidents: Incident[]): string[] {
+  if (!incidents || incidents.length === 0) {
+    return ["Route clear. No active flood incidents logged."];
   }
 
-  const nearbyReports = reports
-    .filter((report) => getNearestSegmentDistanceKm(report.coordinates, coordinates) < 1.5)
+  const nearby = incidents
+    .filter((inc) => inc.status === "active" || inc.status === "receding")
+    .filter((inc) => getNearestSegmentDistanceKm(inc.coordinates, coordinates) < 1.5)
     .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
     .slice(0, 3);
 
-  if (nearbyReports.length === 0) {
-    return ["No high-severity flood reports close to this route."];
+  if (nearby.length === 0) {
+    return ["No high-severity flood incidents close to this route."];
   }
 
-  return nearbyReports.map(
-    (report) =>
-      `⚠️ ${report.roadName} (${report.locationName}): ${report.severity.toUpperCase()} water level (${report.waterLevelCm} cm)`
+  return nearby.map(
+    (inc) =>
+      `⚠️ ${inc.roadName} (${inc.landmark}): ${inc.type} (${inc.severity})`
   );
 }
 
 function buildFallbackDirectRoute(
   origin: Coordinates,
   destination: Coordinates,
-  reports: FloodReport[]
+  incidents: Incident[]
 ): RouteOption {
   const distanceKm = Number(haversineDistanceKm(origin, destination).toFixed(1));
   const coordinates = [origin, destination];
-  const floodExposure = calculateFloodExposure(coordinates, reports);
-  const warnings = buildRouteWarnings(coordinates, reports);
+  const floodExposure = calculateFloodExposure(coordinates, incidents);
+  const warnings = buildRouteWarnings(coordinates, incidents);
 
   return {
     id: "fallback-direct",
@@ -234,7 +240,7 @@ function buildFallbackDirectRoute(
 function buildInlandBypassRoute(
   origin: Coordinates,
   destination: Coordinates,
-  reports: FloodReport[]
+  incidents: Incident[]
 ): RouteOption {
   // Generate an inland offset waypoint to circumvent coastal / river flood zones
   const midLat = (origin.lat + destination.lat) / 2;
@@ -242,8 +248,8 @@ function buildInlandBypassRoute(
   const coordinates = [origin, { lat: midLat, lng: midLng }, destination];
 
   const distanceKm = Number((haversineDistanceKm(origin, coordinates[1]) + haversineDistanceKm(coordinates[1], destination)).toFixed(1));
-  const floodExposure = calculateFloodExposure(coordinates, reports);
-  const warnings = buildRouteWarnings(coordinates, reports);
+  const floodExposure = calculateFloodExposure(coordinates, incidents);
+  const warnings = buildRouteWarnings(coordinates, incidents);
 
   return {
     id: "inland-bypass",

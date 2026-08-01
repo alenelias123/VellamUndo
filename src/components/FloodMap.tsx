@@ -13,47 +13,48 @@ import {
   useMap,
   useMapEvents
 } from "react-leaflet";
-import { severityMeta } from "@/lib/floodReports";
+import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
+import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
+import { severityRank, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import type {
   Coordinates,
-  FloodReport,
-  RouteOption
+  Incident,
+  IncidentType,
+  HelpRequest,
+  ReliefCenter,
+  RouteOption,
+  SeverityLevel
 } from "@/lib/types";
-import { Trash2 } from "lucide-react";
 
 type FloodMapProps = {
   center: Coordinates;
-  userLocation: Coordinates | null;
-  reports: FloodReport[];
-  selectedReportId?: string;
+  incidents: Incident[];
+  helpRequests: HelpRequest[];
+  reliefCenters: ReliefCenter[];
+  selectedIncidentId?: string;
   activeRoute?: RouteOption;
-  destinationLocation?: Coordinates | null;
-  pendingLocation?: Coordinates | null;
-  isAdmin: boolean;
-  onSelectReport: (reportId: string) => void;
-  onDeleteReport: (reportId: string) => void;
+  pendingLocation?: Coordinates;
+  onSelectIncident: (id: string) => void;
   onPickLocation: (coordinates: Coordinates) => void;
 };
 
 export function FloodMap({
   center,
-  userLocation,
-  reports,
-  selectedReportId,
+  incidents,
+  helpRequests,
+  reliefCenters,
+  selectedIncidentId,
   activeRoute,
-  destinationLocation,
   pendingLocation,
-  isAdmin,
-  onSelectReport,
-  onDeleteReport,
+  onSelectIncident,
   onPickLocation
 }: FloodMapProps) {
   return (
     <MapContainer
       center={[center.lat, center.lng]}
-      zoom={12}
+      zoom={11}
       scrollWheelZoom
-      className="flood-map google-map-theme"
+      className="flood-map"
       zoomControl={false}
     >
       <TileLayer
@@ -63,131 +64,107 @@ export function FloodMap({
       <MapClickHandler onPickLocation={onPickLocation} />
       <MapViewController center={center} />
 
-      {/* User Realtime Geolocation Pulse Marker */}
-      {userLocation ? (
-        <Marker
-          position={toLatLng(userLocation)}
-          icon={makeUserLocationIcon()}
-          zIndexOffset={1000}
-        >
-          <Popup>
-            <div className="map-popup user-location-popup">
-              <strong>📍 You are here</strong>
-              <span>Live GPS position</span>
-            </div>
-          </Popup>
-          <Tooltip direction="top" offset={[0, -10]}>
-            Your Current Location (Live)
-          </Tooltip>
-        </Marker>
-      ) : null}
-
-      {/* Destination Marker */}
-      {destinationLocation ? (
-        <Marker
-          position={toLatLng(destinationLocation)}
-          icon={makeDestinationIcon()}
-          zIndexOffset={900}
-        >
-          <Popup>
-            <div className="map-popup">
-              <strong>🎯 Destination</strong>
-            </div>
-          </Popup>
-          <Tooltip direction="top" permanent offset={[0, -14]}>
-            Destination
-          </Tooltip>
-        </Marker>
-      ) : null}
-
-      {/* Active Navigation Route */}
       {activeRoute ? (
         <Polyline
           positions={activeRoute.coordinates.map(toLatLng)}
           pathOptions={{
-            color: activeRoute.floodExposure > 3 ? "#dc2626" : "#2563eb",
+            color: activeRoute.floodExposure > 5 ? "#b33b23" : "#2458b8",
             opacity: 0.9,
-            weight: 7,
-            lineCap: "round",
-            lineJoin: "round"
+            weight: 6
           }}
         >
-          <Tooltip sticky>
-            {activeRoute.name} • {activeRoute.distanceKm} km ({activeRoute.estimatedMinutes} mins)
-          </Tooltip>
+          <Tooltip sticky>{activeRoute.name}</Tooltip>
         </Polyline>
       ) : null}
 
-      {/* Flood Reports Markers */}
-      {reports.map((report) => {
-        const meta = severityMeta[report.severity];
-        const isSelected = report.id === selectedReportId;
+      {/* Render incident markers */}
+      {incidents
+        .filter((inc) => inc.status !== "archived")
+        .map((incident) => {
+          const sevMeta = severityColorMeta[incident.severity];
+          const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: "📍" };
+          const isSelected = incident.id === selectedIncidentId;
+
+          return (
+            <Marker
+              key={incident.id}
+              position={toLatLng(incident.coordinates)}
+              icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected)}
+              eventHandlers={{
+                click: () => onSelectIncident(incident.id)
+              }}
+            >
+              <Popup>
+                <div className="map-popup">
+                  <div className="flex items-center gap-1.5 font-bold text-sm">
+                    <span>{typeMeta.icon}</span>
+                    <span>{incident.type}</span>
+                  </div>
+                  <span className="text-xs text-gray-500 font-semibold">{incident.roadName}</span>
+                  <span className="text-xs text-gray-600 italic">Near {incident.landmark}</span>
+                  <div className="flex gap-2 items-center mt-1">
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] text-white font-bold"
+                      style={{ backgroundColor: sevMeta.color }}
+                    >
+                      {sevMeta.label}
+                    </span>
+                    <span className="text-xs font-bold text-blue-600">{incident.confidence}% match</span>
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+
+      {/* Render relief centers */}
+      {reliefCenters.map((centerItem) => {
+        const meta = reliefCenterTypeMeta[centerItem.type];
 
         return (
-          <CircleMarker
-            key={report.id}
-            center={toLatLng(report.coordinates)}
-            radius={isSelected ? 16 : 11}
-            pathOptions={{
-              color: "#ffffff",
-              fillColor: meta.color,
-              fillOpacity: isSelected ? 0.95 : 0.85,
-              opacity: 1,
-              weight: isSelected ? 4 : 2
-            }}
-            eventHandlers={{
-              click: () => onSelectReport(report.id)
-            }}
+          <Marker
+            key={centerItem.id}
+            position={toLatLng(centerItem.coordinates)}
+            icon={makeTextIcon("center", meta.label.slice(0, 1), meta.color)}
           >
             <Popup>
-              <div className="map-popup flood-report-popup">
-                <div className="popup-header">
-                  <strong>{report.roadName}</strong>
-                  <span
-                    className="severity-badge"
-                    style={{ background: meta.background, color: meta.color }}
-                  >
-                    {meta.label}
-                  </span>
-                </div>
-                <p className="location-sub">{report.locationName}</p>
-                <div className="water-level">
-                  💧 <strong>{report.waterLevelCm} cm</strong> water level
-                </div>
-                {report.description ? <p className="desc">{report.description}</p> : null}
-                <div className="meta-info">
-                  <small>Reported by {report.createdBy}</small>
-                </div>
-
-                {/* Admin Delete Action */}
-                {isAdmin ? (
-                  <button
-                    type="button"
-                    className="delete-report-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteReport(report.id);
-                    }}
-                  >
-                    <Trash2 size={14} /> Delete Report (Admin)
-                  </button>
-                ) : null}
+              <div className="map-popup">
+                <strong>{centerItem.name}</strong>
+                <span>{meta.label}</span>
+                <span>{Math.max(0, centerItem.capacity - centerItem.occupancy)} spaces available</span>
+                <span>{centerItem.contact}</span>
               </div>
             </Popup>
-            <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
-              ⚠️ {report.roadName}: {meta.shortLabel} ({report.waterLevelCm}cm)
-            </Tooltip>
-          </CircleMarker>
+          </Marker>
         );
       })}
 
-      {/* Pending Tapped Location Marker */}
+      {/* Render help requests */}
+      {helpRequests
+        .filter((request) => request.status !== "completed")
+        .map((request) => (
+          <Marker
+            key={request.id}
+            position={toLatLng(request.coordinates)}
+            icon={makeTextIcon("help", helpTypeMeta[request.type].label.slice(0, 1), priorityMeta[request.priority].color)}
+          >
+            <Popup>
+              <div className="map-popup">
+                <strong>{helpTypeMeta[request.type].label} request</strong>
+                <span>{request.locationName}</span>
+                <span>{priorityMeta[request.priority].label} priority</span>
+                <span>{request.peopleCount} people</span>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
       {pendingLocation ? (
         <Marker
           position={toLatLng(pendingLocation)}
-          icon={makeTextIcon("pending", "📍", "#2563eb")}
+          icon={makeTextIcon("pending", "+", "#111827")}
         >
-          <Tooltip direction="top" permanent offset={[0, -14]}>
+          <Tooltip direction="top" permanent>
             Selected Location
           </Tooltip>
         </Marker>
@@ -214,7 +191,7 @@ function MapViewController({ center }: { center: Coordinates }) {
 
   useEffect(() => {
     map.flyTo([center.lat, center.lng], map.getZoom(), {
-      duration: 0.8
+      duration: 0.6
     });
   }, [center.lat, center.lng, map]);
 
@@ -225,36 +202,39 @@ function toLatLng(coordinates: Coordinates): [number, number] {
   return [coordinates.lat, coordinates.lng];
 }
 
-// User location icon (Google Maps style pulsing blue dot)
-function makeUserLocationIcon() {
-  return L.divIcon({
-    className: "google-user-location-marker",
-    html: `
-      <div className="user-dot-wrapper">
-        <div className="user-dot-pulse"></div>
-        <div className="user-dot"></div>
-      </div>
-    `,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14]
-  });
-}
-
-// Destination pin icon
-function makeDestinationIcon() {
-  return L.divIcon({
-    className: "google-destination-marker",
-    html: `<div style="background:#dc2626; color:white; border-radius:50%; width:30px; height:30px; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 10px rgba(0,0,0,0.3); font-size:16px;">🎯</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
-  });
-}
-
-function makeTextIcon(kind: "pending", text: string, color: string) {
+function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: string) {
   return L.divIcon({
     className: `vu-map-icon vu-map-icon--${kind}`,
-    html: `<span style="background:${color}; display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%; color:white; font-size:16px; box-shadow:0 2px 8px rgba(0,0,0,0.3);">${text}</span>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16]
+    html: `<span style="background:${color}">${text}</span>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -10]
+  });
+}
+
+function makeIncidentIcon(emoji: string, color: string, isSelected: boolean) {
+  const size = isSelected ? 40 : 32;
+  const padding = isSelected ? 8 : 6;
+  const borderSize = isSelected ? "3px" : "2px";
+
+  return L.divIcon({
+    className: "vu-incident-icon",
+    html: `<div style="
+      background: white; 
+      border: ${borderSize} solid ${color}; 
+      border-radius: 50%; 
+      width: ${size}px; 
+      height: ${size}px; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      font-size: ${isSelected ? "20px" : "16px"};
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+      transform: scale(${isSelected ? 1.15 : 1.0});
+      transition: all 0.2s ease-out;
+    ">${emoji}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2]
   });
 }
