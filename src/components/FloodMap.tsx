@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import L from "leaflet";
 import {
   CircleMarker,
@@ -57,6 +57,20 @@ export function FloodMap({
   onSelectIncident,
   onPickLocation
 }: FloodMapProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="map-loading bg-gray-50 flex items-center justify-center h-full text-xs font-semibold text-gray-500">
+        Loading Map Viewport...
+      </div>
+    );
+  }
+
   return (
     <MapContainer
       center={[center.lat, center.lng]}
