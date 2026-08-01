@@ -268,6 +268,33 @@ export async function calculateRoadRoutes(
   });
 }
 
+// ── Blockage detection ────────────────────────────────────────────────────────
+/**
+ * Walks the route coordinates and returns the index of the first point that
+ * enters the impact radius of a severe/impassable incident.
+ * Returns -1 if no blockage is found on this route.
+ */
+export function findBlockagePoint(
+  routeCoords: Coordinates[],
+  incidents: Incident[]
+): number {
+  const blocking = incidents.filter(
+    (i) =>
+      (i.status === "active" || i.status === "receding") &&
+      (i.severity === "NOT_PASSABLE" || i.severity === "WAIST_DEEP")
+  );
+  if (blocking.length === 0) return -1;
+
+  for (let i = 0; i < routeCoords.length; i++) {
+    for (const incident of blocking) {
+      const dist = haversineDistanceKm(routeCoords[i], incident.coordinates);
+      const radius = incident.severity === "NOT_PASSABLE" ? 0.4 : 0.6;
+      if (dist < radius) return i;
+    }
+  }
+  return -1;
+}
+
 // ── Analysis ──────────────────────────────────────────────────────────────────
 export function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
   if (!incidents?.length) return 0;

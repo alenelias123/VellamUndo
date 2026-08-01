@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import L from "leaflet";
 import {
   CircleMarker,
@@ -16,6 +16,7 @@ import {
 import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
 import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
+import { findBlockagePoint } from "@/lib/routing";
 import type {
   Coordinates,
   Incident,
@@ -118,35 +119,127 @@ export function FloodMap({
       {/* Render all calculated driving routes */}
       {routes.map((routeOption) => {
         const isSelected = activeRoute?.id === routeOption.id;
-        const isFaded = activeRoute && !isSelected;
-        const opacity = isSelected ? 0.95 : isFaded ? 0.22 : 0.6;
-        const weight = isSelected ? 7 : 4;
+        const isFaded = !!activeRoute && !isSelected;
+        const risk = routeOption.analysis?.floodRisk ?? "LOW";
+        const health = routeOption.analysis?.routeHealth ?? 100;
+        const isBlocked = health === 0 || risk === "EXTREME";
 
-        let color = "#64748b";
-        if (isSelected) {
-          const risk = routeOption.analysis?.floodRisk || "LOW";
-          if (risk === "LOW") color = "#157f3b";
-          else if (risk === "MEDIUM") color = "#0284c7";
-          else if (risk === "HIGH") color = "#ea580c";
-          else color = "#b91c1c";
-        }
+        // Risk-based color for all routes
+        let color: string;
+        if (isBlocked)              color = "#b91c1c";
+        else if (risk === "HIGH")   color = "#ea580c";
+        else if (risk === "MEDIUM") color = "#0284c7";
+        else                        color = "#157f3b";
+
+        const opacity = isSelected ? 0.95 : isFaded ? 0.18 : isBlocked ? 0.6 : 0.45;
+        const weight  = isSelected ? 7 : 4;
+
+        // For blocked routes: find where the passable segment ends
+        const blockageIdx = isBlocked
+          ? findBlockagePoint(routeOption.coordinates, incidents)
+          : -1;
+
+        // Passable segment: everything up to (and including) the blockage point.
+        // If no blockage point found fall back to showing full route faded.
+        const passableCoords =
+          blockageIdx > 1
+            ? routeOption.coordinates.slice(0, blockageIdx + 1)
+            : routeOption.coordinates;
+
+        const blockageCoord =
+          blockageIdx > 1 ? routeOption.coordinates[blockageIdx] : null;
+
+        const tooltip = (
+          <Tooltip sticky>
+            <strong>{routeOption.name}</strong>
+            <br />
+            <span>{routeOption.distanceKm} km · {routeOption.estimatedMinutes} min</span>
+            {routeOption.analysis ? (
+              <span> · {isBlocked ? "🚫 BLOCKED" : `Risk: ${risk}`} ({routeOption.analysis.routeHealth}% health)</span>
+            ) : null}
+          </Tooltip>
+        );
 
         return (
-          <Polyline
-            key={routeOption.id}
-            positions={routeOption.coordinates.map(toLatLng)}
-            pathOptions={{ color, opacity, weight, lineCap: "round", lineJoin: "round" }}
-            eventHandlers={{ click: () => onSelectRoute && onSelectRoute(routeOption) }}
-          >
-            <Tooltip sticky>
-              <strong>{routeOption.name}</strong>
-              <br />
-              <span>{routeOption.distanceKm} km · {routeOption.estimatedMinutes} min</span>
-              {routeOption.analysis && (
-                <span> · Risk: {routeOption.analysis.floodRisk} ({routeOption.analysis.routeHealth}% Health)</span>
-              )}
-            </Tooltip>
-          </Polyline>
+          <React.Fragment key={routeOption.id}>
+            {isBlocked ? (
+              <>
+                {/* Passable portion — solid green up to the block */}
+                <Polyline
+                  positions={passableCoords.map(toLatLng)}
+                  pathOptions={{
+                    color: "#16a34a",
+                    opacity: isSelected ? 0.9 : isFaded ? 0.2 : 0.55,
+                    weight,
+                    lineCap: "round",
+                    lineJoin: "round"
+                  }}
+                  eventHandlers={{ click: () => onSelectRoute?.(routeOption) }}
+                >
+                  {tooltip}
+                </Polyline>
+
+                {/* Remainder of route — faded red dashed to show what's impassable */}
+                {blockageIdx > 1 && blockageIdx < routeOption.coordinates.length - 1 ? (
+                  <Polyline
+                    positions={routeOption.coordinates.slice(blockageIdx).map(toLatLng)}
+                    pathOptions={{
+                      color: "#ef4444",
+                      opacity: isSelected ? 0.55 : isFaded ? 0.1 : 0.28,
+                      weight: isSelected ? 5 : 3,
+                      lineCap: "round",
+                      lineJoin: "round",
+                      dashArray: "6 7"
+                    }}
+                    interactive={false}
+                  />
+                ) : null}
+
+                {/* Blockage pin at the exact first impassable point */}
+                {blockageCoord ? (
+                  <Marker
+                    position={toLatLng(blockageCoord)}
+                    icon={makeBlockageIcon()}
+                    zIndexOffset={1000}
+                  >
+                    <Popup>
+                      <div className="map-popup">
+                        <strong style={{ color: "#b91c1c" }}>🚫 Road Blocked</strong>
+                        <span>
+                          {routeOption.analysis?.affectedIncidents
+                            .filter(
+                              (i) =>
+                                i.severity === "NOT_PASSABLE" ||
+                                i.severity === "WAIST_DEEP"
+                            )
+                            .map((i) => `${i.type} — ${i.landmark}`)
+                            .join(", ") || "Impassable flood zone"}
+                        </span>
+                        <span style={{ fontSize: "0.72rem" }}>
+                          Tap an alternate route to navigate around this area.
+                        </span>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ) : null}
+              </>
+            ) : (
+              /* Normal passable route */
+              <Polyline
+                positions={routeOption.coordinates.map(toLatLng)}
+                pathOptions={{
+                  color,
+                  opacity,
+                  weight,
+                  lineCap: "round",
+                  lineJoin: "round"
+                }}
+                eventHandlers={{ click: () => onSelectRoute?.(routeOption) }}
+              >
+                {tooltip}
+              </Polyline>
+            )}
+          </React.Fragment>
         );
       })}
 
@@ -401,6 +494,42 @@ function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: 
     iconSize: [30, 30],
     iconAnchor: [15, 15],
     popupAnchor: [0, -10]
+  });
+}
+
+// Road-blocked pin — red octagon with 🚫
+function makeBlockageIcon() {
+  return L.divIcon({
+    className: "vu-blockage-icon",
+    html: `
+      <div style="
+        position: relative;
+        width: 36px;
+        height: 42px;
+      ">
+        <!-- Teardrop body -->
+        <div style="
+          width: 36px; height: 36px;
+          background: #b91c1c;
+          border: 3px solid #ffffff;
+          border-radius: 50% 50% 50% 0;
+          transform: rotate(-45deg);
+          box-shadow: 0 3px 12px rgba(185,28,28,0.5);
+        "></div>
+        <!-- Icon centred in the circle -->
+        <span style="
+          position: absolute;
+          top: 3px; left: 0;
+          width: 36px;
+          text-align: center;
+          font-size: 16px;
+          line-height: 30px;
+          pointer-events: none;
+        ">🚫</span>
+      </div>`,
+    iconSize: [36, 42],
+    iconAnchor: [18, 42],
+    popupAnchor: [0, -44]
   });
 }
 

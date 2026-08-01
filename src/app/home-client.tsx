@@ -5,26 +5,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Ambulance,
   CircleDot,
+  LogIn,
+  LogOut,
   MapPinned,
   Navigation2,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  User
 } from "lucide-react";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
 import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
+import { AuthModal } from "@/components/AuthModal";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
-import { severityRank, severityMeta, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
+import { useAuth } from "@/hooks/useAuth";
+import { severityRank, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
 import type { Coordinates, RouteOption } from "@/lib/types";
 
-const FloodMap = dynamic(() => import("@/components/FloodMap").then((mod) => mod.FloodMap), {
-  ssr: false,
-  loading: () => (
-    <div className="map-loading bg-gray-50 flex items-center justify-center h-full text-xs font-semibold text-gray-500">
-      Loading Leaflet Map...
-    </div>
-  )
-});
+const FloodMap = dynamic(
+  () => import("@/components/FloodMap").then((mod) => mod.FloodMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="map-loading">Loading map…</div>
+    )
+  }
+);
 
 type ActivePanel = "report" | "route";
 
@@ -34,20 +40,16 @@ const panelItems: Array<{
   icon: React.ComponentType<{ size?: number }>;
 }> = [
   { id: "report", label: "Report", icon: MapPinned },
-  { id: "route", label: "Route", icon: Navigation2 }
+  { id: "route",  label: "Route",  icon: Navigation2 }
 ];
 
 const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
 
 export default function HomeClient() {
-  const {
-    incidents,
-    offlineQueue,
-    isSyncing,
-    addReport,
-    verifyIncident,
-    resetDemoData
-  } = useEmergencyStore();
+  const { incidents, offlineQueue, isSyncing, addReport, verifyIncident, resetDemoData } =
+    useEmergencyStore();
+
+  const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
 
   const [activePanel, setActivePanel] = useState<ActivePanel>("report");
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
@@ -58,92 +60,65 @@ export default function HomeClient() {
   const [geoError, setGeoError] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [recenterTrigger, setRecenterTrigger] = useState(0);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const watchIdRef = useRef<number | null>(null);
 
-  // Start or restart the GPS watch
+  // ── GPS ────────────────────────────────────────────────────────────
   const startGpsWatch = useCallback(() => {
     if (!navigator.geolocation) {
-      setGeoError("Geolocation is not supported on this device.");
+      setGeoError("Geolocation not supported.");
       return;
     }
-
-    // Clear any existing watch
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
-
     setGpsLoading(true);
     setGeoError(null);
 
     watchIdRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        setUserLocation({
-          lat: Number(position.coords.latitude.toFixed(5)),
-          lng: Number(position.coords.longitude.toFixed(5))
-        });
+      (pos) => {
+        setUserLocation({ lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5) });
         setGeoError(null);
         setGpsLoading(false);
       },
-      (error) => {
+      (err) => {
         setGpsLoading(false);
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            setGeoError("Location access denied. Please allow location in browser settings.");
-            break;
-          case error.POSITION_UNAVAILABLE:
-            setGeoError("GPS signal unavailable. Move to an open area or set location manually.");
-            break;
-          case error.TIMEOUT:
-            setGeoError("GPS timed out. Retrying with low accuracy…");
-            // Fallback: try once with low accuracy
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                setUserLocation({
-                  lat: Number(pos.coords.latitude.toFixed(5)),
-                  lng: Number(pos.coords.longitude.toFixed(5))
-                });
-                setGeoError(null);
-              },
-              () => setGeoError("Could not get location. Set it manually on the map."),
-              { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
-            );
-            break;
-          default:
-            setGeoError("Unable to fetch GPS location. Set it manually on the map.");
-        }
+        if (err.code === err.PERMISSION_DENIED)
+          setGeoError("Location access denied. Set location manually.");
+        else if (err.code === err.POSITION_UNAVAILABLE)
+          setGeoError("GPS unavailable. Move outdoors or set location manually.");
+        else if (err.code === err.TIMEOUT) {
+          setGeoError("GPS timed out. Retrying with low accuracy…");
+          navigator.geolocation.getCurrentPosition(
+            (p) => { setUserLocation({ lat: +p.coords.latitude.toFixed(5), lng: +p.coords.longitude.toFixed(5) }); setGeoError(null); },
+            () => setGeoError("Could not get location. Set manually on map."),
+            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+          );
+        } else setGeoError("Unable to fetch GPS location.");
       },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 5000,
-        timeout: 15000
-      }
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
   }, []);
 
-  // Initial GPS start
   useEffect(() => {
     startGpsWatch();
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recenter: restart GPS watch and fly map to user
   const handleRecenter = useCallback(() => {
     startGpsWatch();
     setRecenterTrigger((n) => n + 1);
   }, [startGpsWatch]);
 
-  const selectedIncident = useMemo(() => {
-    return incidents.find((inc) => inc.id === selectedIncidentId);
-  }, [incidents, selectedIncidentId]);
+  // ── Derived state ──────────────────────────────────────────────────
+  const selectedIncident = useMemo(
+    () => incidents.find((inc) => inc.id === selectedIncidentId),
+    [incidents, selectedIncidentId]
+  );
 
   const mapCenter = useMemo(() => {
-    // recenterTrigger read here so the memo re-runs on recenter
     void recenterTrigger;
     if (selectedIncident) return selectedIncident.coordinates;
     if (pendingLocation) return pendingLocation;
@@ -151,95 +126,126 @@ export default function HomeClient() {
     return DEFAULT_KOCHI_COORDS;
   }, [selectedIncident, pendingLocation, userLocation, recenterTrigger]);
 
-  const severeIncidents = useMemo(() => {
-    return [...incidents]
-      .filter((inc) => inc.status === "active" || inc.status === "receding")
+  const severeIncidents = useMemo(() =>
+    [...incidents]
+      .filter((i) => i.status === "active" || i.status === "receding")
       .sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || b.confidence - a.confidence)
-      .slice(0, 4);
-  }, [incidents]);
+      .slice(0, 4),
+    [incidents]
+  );
 
-  const latestUpdatesRollup = useMemo(() => {
-    return [...incidents]
-      .filter((inc) => inc.status !== "archived")
+  const latestUpdates = useMemo(() =>
+    [...incidents]
+      .filter((i) => i.status !== "archived")
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .slice(0, 4);
-  }, [incidents]);
+      .slice(0, 4),
+    [incidents]
+  );
 
-  function handlePickLocation(coordinates: Coordinates) {
-    setPendingLocation(coordinates);
+  function handlePickLocation(coords: Coordinates) {
+    setPendingLocation(coords);
     setSelectedIncidentId(undefined);
     setActivePanel("report");
   }
 
   function handleRouteChange(route?: RouteOption) {
     setActiveRoute(route);
-    if (route) {
-      setSelectedIncidentId(undefined);
-    }
+    if (route) setSelectedIncidentId(undefined);
   }
 
   return (
     <div className="app-shell">
+
+      {/* Auth modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        user={user}
+        loading={authLoading}
+        onSignIn={signInWithGoogle}
+        onSignOut={signOut}
+      />
+
+      {/* ── Topbar ────────────────────────────────────── */}
       <header className="topbar">
         <div className="brand-lockup">
-          <span className="brand-mark">
-            <ShieldCheck size={22} />
-          </span>
+          <span className="brand-mark"><ShieldCheck size={22} /></span>
           <div>
             <p className="eyebrow">Kerala flood response</p>
             <h1>Vellam Undo</h1>
           </div>
         </div>
 
-        <div className="topbar-controls flex items-center gap-3">
-          {offlineQueue.length > 0 ? (
-            <div className="bg-amber-100 border border-amber-300 rounded px-2.5 py-1 text-[11px] font-bold text-amber-800 flex items-center gap-1.5 animate-pulse shadow-sm">
+        <div className="topbar-controls">
+          {offlineQueue.length > 0 && (
+            <div className="offline-badge">
               <AlertTriangle size={12} />
               <span>{offlineQueue.length} queued offline</span>
             </div>
-          ) : null}
-
-          {isSyncing ? (
-            <div className="bg-blue-100 border border-blue-300 rounded px-2.5 py-1 text-[11px] font-bold text-blue-800 flex items-center gap-1.5 shadow-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
-              <span>Syncing queue...</span>
+          )}
+          {isSyncing && (
+            <div className="syncing-badge">
+              <span className="syncing-dot" />
+              <span>Syncing…</span>
             </div>
-          ) : null}
+          )}
 
           <div className="signal-pill">
             <CircleDot size={14} className="text-green-500 fill-green-500 animate-pulse" />
-            Live Network Status
+            Live
           </div>
+
+          {/* ── Auth button ─────────────────────────── */}
+          {authLoading ? null : user ? (
+            <button
+              type="button"
+              className="topbar-auth-btn topbar-auth-btn--signed-in"
+              onClick={() => setAuthModalOpen(true)}
+              title={`Signed in as ${user.name}`}
+            >
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.name} className="topbar-avatar" referrerPolicy="no-referrer" />
+              ) : (
+                <User size={15} />
+              )}
+              <span className="topbar-auth-name">{user.name.split(" ")[0]}</span>
+              <LogOut size={13} className="topbar-auth-signout-icon" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="topbar-auth-btn topbar-auth-btn--signed-out"
+              onClick={() => setAuthModalOpen(true)}
+            >
+              <LogIn size={15} />
+              <span>Sign in to verify</span>
+            </button>
+          )}
         </div>
       </header>
 
+      {/* ── Workspace ─────────────────────────────────── */}
       <main className="workspace">
         <nav className="mode-rail" aria-label="Operations">
-          {panelItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={activePanel === item.id && !selectedIncidentId ? "is-active" : ""}
-                onClick={() => {
-                  setSelectedIncidentId(undefined);
-                  setActivePanel(item.id);
-                }}
-                title={item.label}
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          {panelItems.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={activePanel === id && !selectedIncidentId ? "is-active" : ""}
+              onClick={() => { setSelectedIncidentId(undefined); setActivePanel(id); }}
+              title={label}
+            >
+              <Icon size={20} />
+              <span>{label}</span>
+            </button>
+          ))}
         </nav>
 
         <section className="map-stage" aria-label="Flood response map">
           <div className="map-frame">
             <FloodMap
               center={mapCenter}
-              userLocation={userLocation || undefined}
+              userLocation={userLocation ?? undefined}
               incidents={incidents}
               selectedIncidentId={selectedIncidentId}
               activeRoute={activeRoute}
@@ -248,120 +254,91 @@ export default function HomeClient() {
               pendingLocation={pendingLocation}
               gpsLoading={gpsLoading}
               onRecenter={handleRecenter}
-              onSelectIncident={(id) => {
-                setSelectedIncidentId(id);
-                setPendingLocation(undefined);
-              }}
+              onSelectIncident={(id) => { setSelectedIncidentId(id); setPendingLocation(undefined); }}
               onPickLocation={handlePickLocation}
             />
           </div>
 
           <div className="map-summary">
-            <Metric
-              label="Incidents Logged"
-              value={incidents.filter((i) => i.status !== "archived").length}
-            />
+            <Metric label="Incidents" value={incidents.filter((i) => i.status !== "archived").length} />
           </div>
 
+          {/* ── Map intel sidebar ──────────────────────── */}
           <aside className="map-intel" aria-label="Flood intelligence">
             <div className="intel-section">
               <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Priority Areas</p>
-                  <h2>Watch list</h2>
-                </div>
-                <Ambulance size={18} className="text-red-500" />
+                <div><p className="eyebrow">Priority Areas</p><h2>Watch list</h2></div>
+                <Ambulance size={18} style={{ color: "var(--red)" }} />
               </div>
               {severeIncidents.length === 0 ? (
-                <p className="text-xs text-gray-400 p-2 italic">No active priority hazards.</p>
-              ) : (
-                severeIncidents.map((incident) => {
-                  const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: "📍" };
-                  const color = severityColorMeta[incident.severity]?.color || "#7f7f7f";
-                  return (
-                    <button
-                      type="button"
-                      className="intel-row text-left hover:bg-gray-50 flex items-center gap-2 p-2 border-b border-gray-100"
-                      key={incident.id}
-                      onClick={() => {
-                        setSelectedIncidentId(incident.id);
-                        setPendingLocation(undefined);
-                      }}
-                    >
-                      <span className="severity-dot shrink-0" style={{ background: color }} />
-                      <span className="truncate">
-                        <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
-                        <small className="text-[10px] text-gray-500 font-semibold flex items-center gap-0.5">
-                          <span>{typeMeta.icon}</span>
-                          <span>{incident.type}</span>
-                        </small>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
+                <p className="muted" style={{ padding: "6px 0", fontSize: "0.78rem" }}>No active priority hazards.</p>
+              ) : severeIncidents.map((inc) => {
+                const meta = incidentTypeMeta[inc.type] ?? { icon: "📍", label: inc.type };
+                const color = severityColorMeta[inc.severity]?.color ?? "#7f7f7f";
+                return (
+                  <button key={inc.id} type="button" className="intel-row"
+                    onClick={() => { setSelectedIncidentId(inc.id); setPendingLocation(undefined); }}>
+                    <span className="severity-dot" style={{ background: color }} />
+                    <span>
+                      <strong>{inc.roadName}</strong>
+                      <small>{meta.icon} {inc.type}</small>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="intel-section">
               <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Incident Feed</p>
-                  <h2>Latest updates</h2>
-                </div>
+                <div><p className="eyebrow">Incident Feed</p><h2>Latest updates</h2></div>
               </div>
-              {latestUpdatesRollup.length === 0 ? (
-                <p className="text-xs text-gray-400 p-2 italic">No updates reported.</p>
-              ) : (
-                latestUpdatesRollup.map((incident) => {
-                  const color = severityColorMeta[incident.severity]?.color || "#7f7f7f";
-                  return (
-                    <button
-                      type="button"
-                      className="intel-row text-left hover:bg-gray-50 flex items-center gap-2 p-2 border-b border-gray-100"
-                      key={incident.id}
-                      onClick={() => {
-                        setSelectedIncidentId(incident.id);
-                        setPendingLocation(undefined);
-                      }}
-                    >
-                      <span className="severity-dot shrink-0" style={{ background: color }} />
-                      <span className="truncate">
-                        <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
-                        <small className="text-[10px] text-gray-400 font-mono">
-                          Updated{" "}
-                          {new Date(incident.updatedAt).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit"
-                          })}
-                        </small>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
+              {latestUpdates.map((inc) => {
+                const color = severityColorMeta[inc.severity]?.color ?? "#7f7f7f";
+                // Show verified tick if community-verified
+                const verifCount = inc.verifications?.length ?? 0;
+                return (
+                  <button key={inc.id} type="button" className="intel-row"
+                    onClick={() => { setSelectedIncidentId(inc.id); setPendingLocation(undefined); }}>
+                    <span className="severity-dot" style={{ background: color }} />
+                    <span>
+                      <strong>
+                        {inc.roadName}
+                        {verifCount >= 2 && (
+                          <span className="intel-verified-tick" title="Community verified"> ✓</span>
+                        )}
+                      </strong>
+                      <small>
+                        {new Date(inc.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </aside>
         </section>
 
+        {/* ── Operations panel ──────────────────────────── */}
         <aside className="operations-panel">
           {selectedIncidentId && selectedIncident ? (
             <IncidentDetailsDrawer
               incident={selectedIncident}
+              user={user}
               onVerify={verifyIncident}
               onClose={() => setSelectedIncidentId(undefined)}
+              onOpenAuth={() => setAuthModalOpen(true)}
             />
           ) : (
             <>
-              {activePanel === "report" ? (
+              {activePanel === "report" && (
                 <ReportPanel
                   pendingLocation={pendingLocation}
                   onPickLocation={handlePickLocation}
                   onSubmit={addReport}
                   onResetDemoData={resetDemoData}
                 />
-              ) : null}
-
-              {activePanel === "route" ? (
+              )}
+              {activePanel === "route" && (
                 <SafeRoutePlanner
                   userLocation={userLocation}
                   incidents={incidents}
@@ -369,36 +346,28 @@ export default function HomeClient() {
                   onDestinationSelect={() => {}}
                   onRouteChange={handleRouteChange}
                   onRoutesCalculated={setRoutesList}
-                  onSelectIncident={(id) => {
-                    setSelectedIncidentId(id);
-                    setPendingLocation(undefined);
-                  }}
+                  onSelectIncident={(id) => { setSelectedIncidentId(id); setPendingLocation(undefined); }}
                 />
-              ) : null}
+              )}
             </>
           )}
         </aside>
       </main>
 
-      <div className="px-5 pb-3 text-xs font-semibold text-gray-600">
+      {/* ── GPS status bar ────────────────────────────── */}
+      <div className="gps-status-bar">
         {gpsLoading
           ? "🛰 Acquiring GPS…"
           : userLocation
-          ? `GPS live: ${userLocation.lat}, ${userLocation.lng}`
-          : geoError || "Fetching live GPS location…"}
+          ? `GPS live · ${userLocation.lat}, ${userLocation.lng}`
+          : geoError ?? "Fetching GPS…"}
       </div>
     </div>
   );
 }
 
-function Metric({
-  label,
-  value,
-  tone = "neutral"
-}: {
-  label: string;
-  value: number;
-  tone?: "neutral" | "safe" | "warning" | "danger";
+function Metric({ label, value, tone = "neutral" }: {
+  label: string; value: number; tone?: "neutral" | "safe" | "warning" | "danger";
 }) {
   return (
     <div className={`metric-card metric-card--${tone}`}>
