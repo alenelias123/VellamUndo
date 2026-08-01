@@ -7,10 +7,13 @@ import {
   Loader2,
   MapPin,
   RotateCcw,
-  Send
+  Search,
+  Send,
+  X
 } from "lucide-react";
 import { compressImage, uploadImageToSupabase } from "@/lib/imageUpload";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
+import { geocodeDestination, type SearchResultPlace } from "@/lib/routing";
 import type { Coordinates, IncidentType, SeverityLevel } from "@/lib/types";
 
 type OfflineReportPayload = {
@@ -49,6 +52,12 @@ export function ReportPanel({
   const [severity, setSeverity] = useState<SeverityLevel>("WATERLOGGED");
   const [notes, setNotes] = useState("");
   const [reporter, setReporter] = useState("");
+
+  // Custom location search state
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationResults, setLocationResults] = useState<SearchResultPlace[]>([]);
+  const [isLocationSearching, setIsLocationSearching] = useState(false);
+  const [locationSearchError, setLocationSearchError] = useState("");
 
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -109,11 +118,52 @@ export function ReportPanel({
       },
       (error) => {
         setGpsLoading(false);
-        setGpsError("GPS lock failed — tap the map to set a location manually.");
-        console.warn("Geolocation error:", error);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setGpsError("Location access denied. Search a custom location below.");
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setGpsError("GPS signal unavailable. Search a custom location below.");
+            break;
+          default:
+            setGpsError("GPS lock failed — tap the map or search a location below.");
+        }
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
     );
+  }
+
+  async function handleLocationSearch() {
+    const q = locationQuery.trim();
+    if (q.length < 2) return;
+
+    setIsLocationSearching(true);
+    setLocationSearchError("");
+    try {
+      const results = await geocodeDestination(q);
+      if (results.length === 0) {
+        setLocationSearchError("No places found. Try a different name.");
+        setLocationResults([]);
+      } else {
+        setLocationResults(results);
+      }
+    } catch {
+      setLocationSearchError("Search failed. Check your connection.");
+    } finally {
+      setIsLocationSearching(false);
+    }
+  }
+
+  function selectSearchedLocation(place: SearchResultPlace) {
+    setLocationResults([]);
+    setLocationQuery(place.name);
+    onPickLocation(place.coordinates);
+  }
+
+  function clearCustomLocation() {
+    setLocationQuery("");
+    setLocationResults([]);
+    setLocationSearchError("");
   }
 
   async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -157,7 +207,7 @@ export function ReportPanel({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!pendingLocation) {
-      alert("Please select a location on the map first.");
+      alert("Please select a location on the map or search one below.");
       return;
     }
 
@@ -228,7 +278,7 @@ export function ReportPanel({
             <div className="report-location-row">
               <span className="report-location-label">
                 <MapPin size={13} />
-                GPS Coordinates
+                Incident Location
               </span>
               <button
                 type="button"
@@ -237,17 +287,19 @@ export function ReportPanel({
                 disabled={gpsLoading}
                 style={{ padding: "0 8px", minHeight: 28, fontSize: "0.75rem" }}
               >
-                {gpsLoading ? "Locking…" : "Re-lock GPS"}
+                {gpsLoading ? (
+                  <><Loader2 size={11} className="report-spin" /> Locking…</>
+                ) : "Use my GPS"}
               </button>
             </div>
 
             {pendingLocation ? (
               <span className="report-coords">
-                {pendingLocation.lat.toFixed(5)}, {pendingLocation.lng.toFixed(5)}
+                📍 {pendingLocation.lat.toFixed(5)}, {pendingLocation.lng.toFixed(5)}
               </span>
             ) : (
               <span className="report-coords report-coords--empty">
-                Detecting location…
+                {gpsLoading ? "Detecting location…" : "No location set — use GPS or search below"}
               </span>
             )}
 
@@ -257,6 +309,74 @@ export function ReportPanel({
                 Reverse geocoding…
               </span>
             ) : null}
+
+            {/* ── Custom location search ─────────────────── */}
+            <div className="location-search-block">
+              <p className="location-search-label">Or search a custom start location:</p>
+              <div className="location-search-row">
+                <div className="location-search-input-wrap">
+                  <Search size={13} className="location-search-icon" />
+                  <input
+                    type="text"
+                    className="location-search-input"
+                    placeholder="e.g. Aluva bus stand, Thrissur…"
+                    value={locationQuery}
+                    onChange={(e) => {
+                      setLocationQuery(e.target.value);
+                      if (!e.target.value) clearCustomLocation();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleLocationSearch();
+                      }
+                    }}
+                  />
+                  {locationQuery ? (
+                    <button
+                      type="button"
+                      className="location-search-clear"
+                      onClick={clearCustomLocation}
+                      aria-label="Clear search"
+                    >
+                      <X size={12} />
+                    </button>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="location-search-btn"
+                  onClick={() => handleLocationSearch()}
+                  disabled={isLocationSearching || locationQuery.trim().length < 2}
+                >
+                  {isLocationSearching ? (
+                    <Loader2 size={13} className="report-spin" />
+                  ) : (
+                    <Search size={13} />
+                  )}
+                </button>
+              </div>
+
+              {locationSearchError ? (
+                <p className="location-search-error">{locationSearchError}</p>
+              ) : null}
+
+              {locationResults.length > 0 ? (
+                <ul className="location-search-results">
+                  {locationResults.map((result) => (
+                    <li key={result.id}>
+                      <button
+                        type="button"
+                        onClick={() => selectSearchedLocation(result)}
+                      >
+                        <strong>📍 {result.name}</strong>
+                        <small>{result.fullName}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           </div>
 
           {/* ── Incident type ──────────────────────────────── */}
