@@ -5,11 +5,16 @@ import { buildAnalyticsSnapshot } from "@/lib/analytics";
 import { demoFloodReports, demoHelpRequests, demoReliefCenters } from "@/lib/demo-data";
 import { createFloodReport, type NewFloodReportInput, verifyReport } from "@/lib/floodReports";
 import {
-  createHelpRequest,
-  type NewHelpRequestInput,
-  updateHelpRequestStatus
-} from "@/lib/helpRequests";
+  deleteReportFromSupabase,
+  fetchReportsFromSupabase,
+  insertReportToSupabase
+} from "@/lib/supabase";
 import type { FloodReport, HelpRequest, HelpStatus, ReliefCenter } from "@/lib/types";
+
+export type UserSession = {
+  email: string;
+  role: "user" | "admin";
+};
 
 type EmergencyState = {
   reports: FloodReport[];
@@ -17,7 +22,8 @@ type EmergencyState = {
   reliefCenters: ReliefCenter[];
 };
 
-const storageKey = "vellam-undo-emergency-state-v1";
+const storageKey = "vellam-undo-emergency-state-v2";
+const authStorageKey = "vellam-undo-auth-user";
 
 const initialState: EmergencyState = {
   reports: demoFloodReports,
@@ -28,27 +34,56 @@ const initialState: EmergencyState = {
 export function useEmergencyStore() {
   const [state, setState] = useState<EmergencyState>(initialState);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [userSession, setUserSession] = useState<UserSession | null>(null);
 
+  // Load user session & fetch reports from Supabase on mount
   useEffect(() => {
-    const saved = window.localStorage.getItem(storageKey);
-    if (saved) {
+    // 1. Auth session
+    const savedAuth = window.localStorage.getItem(authStorageKey);
+    if (savedAuth) {
       try {
-        setState(JSON.parse(saved) as EmergencyState);
+        setUserSession(JSON.parse(savedAuth));
+      } catch {
+        window.localStorage.removeItem(authStorageKey);
+      }
+    }
+
+    // 2. Saved state fallback
+    const savedState = window.localStorage.getItem(storageKey);
+    if (savedState) {
+      try {
+        setState(JSON.parse(savedState) as EmergencyState);
       } catch {
         window.localStorage.removeItem(storageKey);
       }
     }
 
-    setIsHydrated(true);
+    // 3. Supabase live fetch
+    fetchReportsFromSupabase().then((supabaseReports) => {
+      if (supabaseReports !== null) {
+        setState((current) => ({
+          ...current,
+          reports: supabaseReports
+        }));
+      }
+      setIsHydrated(true);
+    });
   }, []);
 
+  // Sync state to local storage
   useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
-
+    if (!isHydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [isHydrated, state]);
+
+  // Sync auth to local storage
+  useEffect(() => {
+    if (userSession) {
+      window.localStorage.setItem(authStorageKey, JSON.stringify(userSession));
+    } else {
+      window.localStorage.removeItem(authStorageKey);
+    }
+  }, [userSession]);
 
   const analytics = useMemo(
     () => buildAnalyticsSnapshot(state.reports, state.helpRequests, state.reliefCenters),
@@ -58,13 +93,40 @@ export function useEmergencyStore() {
   return {
     ...state,
     analytics,
-    addReport(input: NewFloodReportInput) {
-      const report = createFloodReport(input);
+    userSession,
+    login(email: string, role: "user" | "admin" = "user") {
+      const session: UserSession = { email, role };
+      setUserSession(session);
+      return session;
+    },
+    logout() {
+      setUserSession(null);
+    },
+    async addReport(input: NewFloodReportInput) {
+      const report = createFloodReport({
+        ...input,
+        createdBy: userSession?.email || input.createdBy || "Logged-in User"
+      });
+
+      // Update local state immediately
       setState((current) => ({
         ...current,
         reports: [report, ...current.reports]
       }));
+
+      // Insert into Supabase
+      await insertReportToSupabase(report);
       return report;
+    },
+    async deleteReport(reportId: string) {
+      // Remove from state
+      setState((current) => ({
+        ...current,
+        reports: current.reports.filter((r) => r.id !== reportId)
+      }));
+
+      // Delete from Supabase
+      await deleteReportFromSupabase(reportId);
     },
     verifyReport(reportId: string, action: "confirm" | "flag") {
       setState((current) => ({
@@ -72,27 +134,12 @@ export function useEmergencyStore() {
         reports: verifyReport(current.reports, reportId, action)
       }));
     },
-    addHelpRequest(input: NewHelpRequestInput) {
-      const request = createHelpRequest(input);
-      setState((current) => ({
-        ...current,
-        helpRequests: [request, ...current.helpRequests]
-      }));
-      return request;
-    },
-    updateHelpStatus(requestId: string, status: HelpStatus, assignedVolunteer?: string) {
-      setState((current) => ({
-        ...current,
-        helpRequests: updateHelpRequestStatus(
-          current.helpRequests,
-          requestId,
-          status,
-          assignedVolunteer
-        )
-      }));
-    },
-    resetDemoData() {
-      setState(initialState);
+    resetData() {
+      setState({
+        reports: [],
+        helpRequests: [],
+        reliefCenters: []
+      });
       window.localStorage.removeItem(storageKey);
     }
   };

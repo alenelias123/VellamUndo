@@ -1,89 +1,44 @@
 import { severityRank } from "./floodReports";
-import type { Coordinates, FloodReport, RouteOption, RoutePlace } from "./types";
+import type { Coordinates, FloodReport, RouteOption } from "./types";
 
-export const routePlaces: RoutePlace[] = [
-  {
-    id: "kochi-mg-road",
-    name: "MG Road, Kochi",
-    district: "ernakulam",
-    coordinates: { lat: 9.9769, lng: 76.2824 }
-  },
-  {
-    id: "aluva",
-    name: "Aluva KSRTC",
-    district: "ernakulam",
-    coordinates: { lat: 10.1076, lng: 76.3512 }
-  },
-  {
-    id: "kakkanad",
-    name: "Kakkanad Civil Station",
-    district: "ernakulam",
-    coordinates: { lat: 10.0159, lng: 76.3419 }
-  },
-  {
-    id: "cherthala",
-    name: "Cherthala Junction",
-    district: "alappuzha",
-    coordinates: { lat: 9.6856, lng: 76.3366 }
-  },
-  {
-    id: "alappuzha",
-    name: "Alappuzha Beach Road",
-    district: "alappuzha",
-    coordinates: { lat: 9.5001, lng: 76.3263 }
-  },
-  {
-    id: "kottayam",
-    name: "Kottayam Collectorate",
-    district: "kottayam",
-    coordinates: { lat: 9.5916, lng: 76.5222 }
-  },
-  {
-    id: "thrissur",
-    name: "Thrissur Round",
-    district: "thrissur",
-    coordinates: { lat: 10.5276, lng: 76.2144 }
-  },
-  {
-    id: "kozhikode",
-    name: "Kozhikode Railway Station",
-    district: "kozhikode",
-    coordinates: { lat: 11.2456, lng: 75.7818 }
-  }
-];
+export type SearchResultPlace = {
+  id: string;
+  name: string;
+  fullName: string;
+  coordinates: Coordinates;
+};
 
-const bypassWaypoints: RoutePlace[] = [
-  {
-    id: "muvattupuzha-high-road",
-    name: "Muvattupuzha high road",
-    district: "ernakulam",
-    coordinates: { lat: 9.9849, lng: 76.579 }
-  },
-  {
-    id: "angamaly-relief-corridor",
-    name: "Angamaly relief corridor",
-    district: "ernakulam",
-    coordinates: { lat: 10.1905, lng: 76.3874 }
-  },
-  {
-    id: "changanassery-elevated-link",
-    name: "Changanassery elevated link",
-    district: "kottayam",
-    coordinates: { lat: 9.4457, lng: 76.5406 }
-  },
-  {
-    id: "wadakkanchery-link",
-    name: "Wadakkanchery link",
-    district: "thrissur",
-    coordinates: { lat: 10.6552, lng: 76.2529 }
-  },
-  {
-    id: "ramanattukara-link",
-    name: "Ramanattukara link",
-    district: "kozhikode",
-    coordinates: { lat: 11.1793, lng: 75.8597 }
+// Search places using OpenStreetMap Nominatim API
+export async function geocodeDestination(query: string): Promise<SearchResultPlace[]> {
+  if (!query || query.trim().length < 2) return [];
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+      query.trim()
+    )}&limit=6&countrycodes=in`;
+    const response = await fetch(url, {
+      headers: {
+        "Accept-Language": "en-US,en"
+      }
+    });
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    return data.map((item: any) => ({
+      id: item.place_id ? String(item.place_id) : `place-${Math.random()}`,
+      name: item.display_name.split(",")[0] || item.display_name,
+      fullName: item.display_name,
+      coordinates: {
+        lat: Number.parseFloat(item.lat),
+        lng: Number.parseFloat(item.lon)
+      }
+    }));
+  } catch (error) {
+    console.warn("Geocoding failed:", error);
+    return [];
   }
-];
+}
 
 export function haversineDistanceKm(start: Coordinates, end: Coordinates): number {
   const radiusKm = 6371;
@@ -99,94 +54,94 @@ export function haversineDistanceKm(start: Coordinates, end: Coordinates): numbe
   return radiusKm * angularDistance;
 }
 
-export function buildRouteOptions(
-  source: RoutePlace,
-  destination: RoutePlace,
+// Fetch turn-by-turn road route from OSRM public API
+export async function calculateRoadRoutes(
+  origin: Coordinates,
+  destination: Coordinates,
   reports: FloodReport[]
-): RouteOption[] {
-  const direct = buildRouteOption("direct", "Fastest direct road", [source.coordinates, destination.coordinates], reports);
+): Promise<RouteOption[]> {
+  const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`;
 
-  const nearestSourceBypass = findNearestBypass(source.coordinates);
-  const nearestDestinationBypass = findNearestBypass(destination.coordinates);
-  const saferCoordinates =
-    nearestSourceBypass.id === nearestDestinationBypass.id
-      ? [source.coordinates, nearestSourceBypass.coordinates, destination.coordinates]
-      : [
-          source.coordinates,
-          nearestSourceBypass.coordinates,
-          nearestDestinationBypass.coordinates,
-          destination.coordinates
-        ];
-
-  const reliefCorridor = buildRouteOption(
-    "relief-corridor",
-    "Relief corridor",
-    saferCoordinates,
-    reports,
-    "Uses higher-capacity junctions and known response corridors"
-  );
-
-  const inlandBypass = buildRouteOption(
-    "inland-bypass",
-    "Inland bypass",
-    [source.coordinates, { lat: 10.05, lng: 76.62 }, { lat: 10.45, lng: 76.48 }, destination.coordinates],
-    reports,
-    "Longer route that avoids low-lying coastal stretches"
-  );
-
-  return [direct, reliefCorridor, inlandBypass].sort((left, right) => {
-    const exposureDelta = left.floodExposure - right.floodExposure;
-    if (Math.abs(exposureDelta) > 1) {
-      return exposureDelta;
+  try {
+    const response = await fetch(osrmUrl);
+    if (!response.ok) {
+      throw new Error(`OSRM HTTP error ${response.status}`);
     }
 
-    return left.distanceKm - right.distanceKm;
-  });
-}
-
-function buildRouteOption(
-  id: string,
-  name: string,
-  coordinates: Coordinates[],
-  reports: FloodReport[],
-  summary = "Shortest available road geometry"
-): RouteOption {
-  const distanceKm = calculateRouteDistance(coordinates);
-  const floodExposure = calculateFloodExposure(coordinates, reports);
-  const estimatedMinutes = Math.round(distanceKm * 2.4 + floodExposure * 3);
-  const warnings = buildWarnings(floodExposure, reports, coordinates);
-
-  return {
-    id,
-    name,
-    summary,
-    coordinates,
-    distanceKm: Number(distanceKm.toFixed(1)),
-    estimatedMinutes,
-    floodExposure: Number(floodExposure.toFixed(1)),
-    confidence: Math.max(42, Math.min(96, Math.round(96 - floodExposure * 5))),
-    warnings
-  };
-}
-
-function calculateRouteDistance(coordinates: Coordinates[]): number {
-  return coordinates.reduce((total, coordinate, index) => {
-    if (index === 0) {
-      return total;
+    const data = await response.json();
+    if (!data.routes || data.routes.length === 0) {
+      return [buildFallbackDirectRoute(origin, destination, reports)];
     }
 
-    return total + haversineDistanceKm(coordinates[index - 1], coordinate);
-  }, 0);
+    const routeOptions: RouteOption[] = data.routes.map((route: any, index: number) => {
+      const coords: Coordinates[] = route.geometry.coordinates.map(
+        (pair: [number, number]) => ({
+          lat: pair[1],
+          lng: pair[0]
+        })
+      );
+
+      const distanceKm = Number((route.distance / 1000).toFixed(1));
+      const baseMinutes = Math.round(route.duration / 60);
+      const floodExposure = calculateFloodExposure(coords, reports);
+      const warnings = buildRouteWarnings(coords, reports);
+      const estimatedMinutes = Math.round(baseMinutes + floodExposure * 3);
+
+      const isFirst = index === 0;
+      const isLowExposure = floodExposure < 1;
+
+      let name = isFirst
+        ? isLowExposure
+          ? "Direct Safe Route"
+          : "Primary Driving Route"
+        : `Alternate Route ${index}`;
+      let summary = isLowExposure
+        ? "Clear roads based on reported flood markers"
+        : `Passes near flood points (${warnings.length} caution warnings)`;
+
+      return {
+        id: `osrm-route-${index}`,
+        name,
+        summary,
+        coordinates: coords,
+        distanceKm,
+        estimatedMinutes,
+        floodExposure: Number(floodExposure.toFixed(1)),
+        confidence: Math.max(40, Math.min(98, Math.round(98 - floodExposure * 8))),
+        warnings
+      };
+    });
+
+    // Check if primary route is flooded. If so, generate an inland bypass if possible.
+    const primaryRoute = routeOptions[0];
+    if (primaryRoute && primaryRoute.floodExposure > 2.5) {
+      const bypassRoute = buildInlandBypassRoute(origin, destination, reports);
+      routeOptions.push(bypassRoute);
+    }
+
+    // Sort routes by lowest flood exposure first, then distance
+    return routeOptions.sort((a, b) => {
+      const expDiff = a.floodExposure - b.floodExposure;
+      if (Math.abs(expDiff) > 1) return expDiff;
+      return a.distanceKm - b.distanceKm;
+    });
+  } catch (err) {
+    console.warn("OSRM routing failed, falling back to geometric route:", err);
+    return [buildFallbackDirectRoute(origin, destination, reports)];
+  }
 }
 
 function calculateFloodExposure(route: Coordinates[], reports: FloodReport[]): number {
+  if (!reports || reports.length === 0) return 0;
   let exposure = 0;
 
   for (const report of reports) {
     const nearestSegmentDistance = getNearestSegmentDistanceKm(report.coordinates, route);
-    const impactRadiusKm = severityRank[report.severity] >= 3 ? 2.4 : 1.4;
-    const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
-    exposure += proximity * severityRank[report.severity] * (1 + report.confirmations * 0.12);
+    const impactRadiusKm = severityRank[report.severity] >= 3 ? 2.5 : 1.2;
+    if (nearestSegmentDistance < impactRadiusKm) {
+      const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
+      exposure += proximity * severityRank[report.severity] * (1 + report.confirmations * 0.1);
+    }
   }
 
   return exposure;
@@ -194,9 +149,13 @@ function calculateFloodExposure(route: Coordinates[], reports: FloodReport[]): n
 
 function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
   let nearest = Number.POSITIVE_INFINITY;
+  const sampleStep = Math.max(1, Math.floor(route.length / 80));
 
-  for (let index = 1; index < route.length; index += 1) {
-    nearest = Math.min(nearest, distancePointToSegmentKm(point, route[index - 1], route[index]));
+  for (let index = sampleStep; index < route.length; index += sampleStep) {
+    nearest = Math.min(
+      nearest,
+      distancePointToSegmentKm(point, route[index - sampleStep], route[index])
+    );
   }
 
   return nearest;
@@ -204,9 +163,9 @@ function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): 
 
 function distancePointToSegmentKm(point: Coordinates, start: Coordinates, end: Coordinates): number {
   const originLat = toRadians((start.lat + end.lat + point.lat) / 3);
-  const toXY = (coordinate: Coordinates) => ({
-    x: coordinate.lng * 111.32 * Math.cos(originLat),
-    y: coordinate.lat * 110.57
+  const toXY = (c: Coordinates) => ({
+    x: c.lng * 111.32 * Math.cos(originLat),
+    y: c.lat * 110.57
   });
 
   const p = toXY(point);
@@ -229,31 +188,74 @@ function distancePointToSegmentKm(point: Coordinates, start: Coordinates, end: C
   return Math.hypot(p.x - projection.x, p.y - projection.y);
 }
 
-function buildWarnings(
-  floodExposure: number,
-  reports: FloodReport[],
-  coordinates: Coordinates[]
-): string[] {
+function buildRouteWarnings(coordinates: Coordinates[], reports: FloodReport[]): string[] {
+  if (!reports || reports.length === 0) {
+    return ["Route clear. No active flood reports logged."];
+  }
+
   const nearbyReports = reports
-    .filter((report) => getNearestSegmentDistanceKm(report.coordinates, coordinates) < 1.2)
-    .filter((report) => severityRank[report.severity] >= 2)
+    .filter((report) => getNearestSegmentDistanceKm(report.coordinates, coordinates) < 1.5)
+    .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
     .slice(0, 3);
 
-  if (nearbyReports.length === 0 && floodExposure < 2) {
-    return ["No high-severity reports close to this route."];
+  if (nearbyReports.length === 0) {
+    return ["No high-severity flood reports close to this route."];
   }
 
   return nearbyReports.map(
-    (report) => `${report.roadName}: ${report.waterLevelCm} cm water near ${report.locationName}`
+    (report) =>
+      `⚠️ ${report.roadName} (${report.locationName}): ${report.severity.toUpperCase()} water level (${report.waterLevelCm} cm)`
   );
 }
 
-function findNearestBypass(coordinates: Coordinates): RoutePlace {
-  return [...bypassWaypoints].sort(
-    (left, right) =>
-      haversineDistanceKm(coordinates, left.coordinates) -
-      haversineDistanceKm(coordinates, right.coordinates)
-  )[0];
+function buildFallbackDirectRoute(
+  origin: Coordinates,
+  destination: Coordinates,
+  reports: FloodReport[]
+): RouteOption {
+  const distanceKm = Number(haversineDistanceKm(origin, destination).toFixed(1));
+  const coordinates = [origin, destination];
+  const floodExposure = calculateFloodExposure(coordinates, reports);
+  const warnings = buildRouteWarnings(coordinates, reports);
+
+  return {
+    id: "fallback-direct",
+    name: "Direct Route",
+    summary: "Geodesic straight line distance",
+    coordinates,
+    distanceKm,
+    estimatedMinutes: Math.round(distanceKm * 2.2),
+    floodExposure: Number(floodExposure.toFixed(1)),
+    confidence: 80,
+    warnings
+  };
+}
+
+function buildInlandBypassRoute(
+  origin: Coordinates,
+  destination: Coordinates,
+  reports: FloodReport[]
+): RouteOption {
+  // Generate an inland offset waypoint to circumvent coastal / river flood zones
+  const midLat = (origin.lat + destination.lat) / 2;
+  const midLng = (origin.lng + destination.lng) / 2 + 0.08; // Shift east/inland
+  const coordinates = [origin, { lat: midLat, lng: midLng }, destination];
+
+  const distanceKm = Number((haversineDistanceKm(origin, coordinates[1]) + haversineDistanceKm(coordinates[1], destination)).toFixed(1));
+  const floodExposure = calculateFloodExposure(coordinates, reports);
+  const warnings = buildRouteWarnings(coordinates, reports);
+
+  return {
+    id: "inland-bypass",
+    name: "Inland Safe Bypass",
+    summary: "Bypasses low-lying river corridors",
+    coordinates,
+    distanceKm,
+    estimatedMinutes: Math.round(distanceKm * 2.5),
+    floodExposure: Number(floodExposure.toFixed(1)),
+    confidence: 90,
+    warnings
+  };
 }
 
 function toRadians(degrees: number): number {
