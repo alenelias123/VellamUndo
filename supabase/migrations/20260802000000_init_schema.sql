@@ -6,7 +6,7 @@ create table if not exists public.incidents (
   id uuid primary key default gen_random_uuid(),
   type text not null,
   status text not null check (status in ('active', 'receding', 'resolved', 'archived')),
-  severity text not null check (severity in ('safe', 'waterlogged', 'knee-deep', 'waist-deep', 'not-passable')),
+  severity text not null check (severity in ('SAFE', 'WATERLOGGED', 'KNEE_DEEP', 'WAIST_DEEP', 'NOT_PASSABLE')),
   road_name text not null,
   landmark text not null,
   district text not null,
@@ -22,7 +22,7 @@ create table if not exists public.incidents (
 create table if not exists public.incident_reports (
   id uuid primary key default gen_random_uuid(),
   incident_id uuid not null references public.incidents(id) on delete cascade,
-  severity text not null check (severity in ('safe', 'waterlogged', 'knee-deep', 'waist-deep', 'not-passable')),
+  severity text not null check (severity in ('SAFE', 'WATERLOGGED', 'KNEE_DEEP', 'WAIST_DEEP', 'NOT_PASSABLE')),
   notes text,
   reporter text default 'Community reporter',
   created_at timestamptz default now()
