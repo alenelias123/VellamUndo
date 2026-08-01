@@ -53,6 +53,7 @@ export default function HomeClient() {
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
+  const [routesList, setRoutesList] = useState<RouteOption[]>([]);
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
 
@@ -186,6 +187,8 @@ export default function HomeClient() {
               incidents={incidents}
               selectedIncidentId={selectedIncidentId}
               activeRoute={activeRoute}
+              routes={routesList}
+              onSelectRoute={handleRouteChange}
               pendingLocation={pendingLocation}
               onSelectIncident={(id) => {
                 setSelectedIncidentId(id);
@@ -307,6 +310,11 @@ export default function HomeClient() {
                   activeRoute={activeRoute}
                   onDestinationSelect={() => {}}
                   onRouteChange={handleRouteChange}
+                  onRoutesCalculated={setRoutesList}
+                  onSelectIncident={(id) => {
+                    setSelectedIncidentId(id);
+                    setPendingLocation(undefined);
+                  }}
                 />
               ) : null}
             </>

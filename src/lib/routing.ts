@@ -1,5 +1,5 @@
-import { severityRank } from "./floodReports";
-import type { Coordinates, Incident, RouteOption } from "./types";
+import { severityRank, formatRelativeTime } from "./floodReports";
+import type { Coordinates, Incident, RouteOption, RouteAnalysis, SeverityLevel } from "./types";
 
 export type SearchResultPlace = {
   id: string;
@@ -7,6 +7,9 @@ export type SearchResultPlace = {
   fullName: string;
   coordinates: Coordinates;
 };
+
+// In-memory cache for OSRM raw route geometries to avoid redundant slow requests
+const osrmGeometryCache = new Map<string, any>();
 
 // Search places using OpenStreetMap Nominatim API
 export async function geocodeDestination(query: string): Promise<SearchResultPlace[]> {
@@ -54,26 +57,193 @@ export function haversineDistanceKm(start: Coordinates, end: Coordinates): numbe
   return radiusKm * angularDistance;
 }
 
-// Fetch turn-by-turn road route from OSRM public API
+// Check if incident is verified or reported by a volunteer
+function isVolunteerVerified(incident: Incident): boolean {
+  const hasVolReport = incident.reports?.some(
+    (r) =>
+      r.reporter.toLowerCase().includes("volunteer") ||
+      r.reporter.toLowerCase().includes("admin")
+  );
+  const hasVolVerif = incident.verifications?.some(
+    (v) =>
+      v.reporter.toLowerCase().includes("volunteer") ||
+      v.reporter.toLowerCase().includes("admin")
+  );
+  return !!(hasVolReport || hasVolVerif);
+}
+
+// Calculate report age decay factor
+function getIncidentAgeFactor(updatedAtStr: string): number {
+  const elapsedMs = Date.now() - new Date(updatedAtStr).getTime();
+  const elapsedHours = Math.max(0, elapsedMs / (1000 * 60 * 60));
+  if (elapsedHours > 24) return 0.25;
+  if (elapsedHours > 12) return 0.5;
+  if (elapsedHours > 4) return 0.75;
+  return 1.0;
+}
+
+// Calculate enhanced flood exposure score
+export function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
+  if (!incidents || incidents.length === 0) return 0;
+  let exposure = 0;
+
+  for (const incident of incidents) {
+    // Ignore resolved and archived/false incidents
+    if (incident.status === "resolved" || incident.status === "archived") {
+      continue;
+    }
+
+    const nearestSegmentDistance = getNearestSegmentDistanceKm(incident.coordinates, route);
+    const rank = severityRank[incident.severity] || 0;
+    
+    // Safety buffer impact radius (higher severity affects wider areas)
+    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
+
+    if (nearestSegmentDistance < impactRadiusKm) {
+      const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
+      const ageFactor = getIncidentAgeFactor(incident.updatedAt);
+      const confidenceFactor = 1.0 + incident.confidence * 0.01; // higher confidence has higher weight
+      const volunteerFactor = isVolunteerVerified(incident) ? 1.5 : 1.0; // volunteer verified receives higher weight
+
+      exposure += proximity * rank * ageFactor * confidenceFactor * volunteerFactor;
+    }
+  }
+
+  return exposure;
+}
+
+// Performs analysis step for a generated route
+export function analyzeRoute(
+  routeCoords: Coordinates[],
+  incidents: Incident[],
+  distanceKm: number,
+  baseMinutes: number
+): RouteAnalysis {
+  const affectedIncidents: Incident[] = [];
+
+  for (const incident of incidents) {
+    if (incident.status === "resolved" || incident.status === "archived") {
+      continue;
+    }
+
+    const nearestDist = getNearestSegmentDistanceKm(incident.coordinates, routeCoords);
+    const rank = severityRank[incident.severity] || 0;
+    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
+
+    if (nearestDist < impactRadiusKm) {
+      affectedIncidents.push(incident);
+    }
+  }
+
+  const affectedIncidentsCount = affectedIncidents.length;
+  
+  // Calculate highest severity
+  let highestIncidentSeverity: SeverityLevel | "SAFE" = "SAFE";
+  for (const inc of affectedIncidents) {
+    if (highestIncidentSeverity === "SAFE" || severityRank[inc.severity] > severityRank[highestIncidentSeverity]) {
+      highestIncidentSeverity = inc.severity;
+    }
+  }
+
+  // Average confidence
+  const averageConfidence =
+    affectedIncidentsCount > 0
+      ? Math.round(
+          affectedIncidents.reduce((sum, inc) => sum + inc.confidence, 0) / affectedIncidentsCount
+        )
+      : 0;
+
+  // Last updated timestamp
+  let lastUpdated = "N/A";
+  if (affectedIncidentsCount > 0) {
+    const latestTime = Math.max(...affectedIncidents.map((inc) => new Date(inc.updatedAt).getTime()));
+    lastUpdated = new Date(latestTime).toISOString();
+  }
+
+  // Estimated delays (delay padded based on flood severity exposure score)
+  const exposure = calculateFloodExposure(routeCoords, incidents);
+  const estimatedDelayMinutes = Math.round(exposure * 3.5);
+
+  // Risk Rating
+  let floodRisk: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" = "LOW";
+  if (exposure > 5) floodRisk = "EXTREME";
+  else if (exposure > 2) floodRisk = "HIGH";
+  else if (exposure > 0) floodRisk = "MEDIUM";
+
+  // Health score normalized 0 - 100
+  let routeHealth = 100;
+  if (highestIncidentSeverity === "NOT_PASSABLE") {
+    routeHealth = 0; // Blocked route has zero health
+  } else {
+    routeHealth = Math.max(0, Math.round(100 - exposure * 14));
+  }
+
+  // Compile risk explanations
+  const riskExplanations: string[] = [];
+  if (affectedIncidentsCount === 0) {
+    riskExplanations.push("Route appears clear based on local flood reports.");
+  } else {
+    riskExplanations.push(`Route passes through ${affectedIncidentsCount} active flood incident${affectedIncidentsCount > 1 ? "s" : ""}.`);
+    
+    // Sort affected incidents by severity to describe key hazards first
+    const sortedAffected = [...affectedIncidents].sort(
+      (a, b) => severityRank[b.severity] - severityRank[a.severity]
+    );
+
+    // List top 2 warnings
+    sortedAffected.slice(0, 2).forEach((inc) => {
+      const severityLabel = inc.severity.replace("_", " ").toLowerCase();
+      riskExplanations.push(`${inc.type} (${severityLabel}) near ${inc.landmark}.`);
+    });
+
+    if (lastUpdated !== "N/A") {
+      riskExplanations.push(`Condition confirmed ${formatRelativeTime(lastUpdated)}.`);
+    }
+  }
+
+  return {
+    floodRisk,
+    routeHealth,
+    affectedIncidentsCount,
+    highestIncidentSeverity,
+    averageConfidence,
+    lastUpdated,
+    estimatedDelayMinutes,
+    affectedIncidents,
+    riskExplanations
+  };
+}
+
+// Fetch turn-by-turn road route from OSRM public API with cache layer
 export async function calculateRoadRoutes(
   origin: Coordinates,
   destination: Coordinates,
   incidents: Incident[]
 ): Promise<RouteOption[]> {
-  const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`;
+  const cacheKey = `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}-${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}`;
+  let osrmData = osrmGeometryCache.get(cacheKey);
+
+  const fetchFailed = false;
+
+  if (!osrmData) {
+    try {
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`;
+      const response = await fetch(osrmUrl);
+      if (response.ok) {
+        osrmData = await response.json();
+        osrmGeometryCache.set(cacheKey, osrmData);
+      }
+    } catch (err) {
+      console.warn("OSRM API fetch failed, falling back to geometric calculation:", err);
+    }
+  }
 
   try {
-    const response = await fetch(osrmUrl);
-    if (!response.ok) {
-      throw new Error(`OSRM HTTP error ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (!data.routes || data.routes.length === 0) {
+    if (!osrmData || !osrmData.routes || osrmData.routes.length === 0) {
       return [buildFallbackDirectRoute(origin, destination, incidents)];
     }
 
-    const routeOptions: RouteOption[] = data.routes.map((route: any, index: number) => {
+    const routeOptions: RouteOption[] = osrmData.routes.map((route: any, index: number) => {
       const coords: Coordinates[] = route.geometry.coordinates.map(
         (pair: [number, number]) => ({
           lat: pair[1],
@@ -84,20 +254,20 @@ export async function calculateRoadRoutes(
       const distanceKm = Number((route.distance / 1000).toFixed(1));
       const baseMinutes = Math.round(route.duration / 60);
       const floodExposure = calculateFloodExposure(coords, incidents);
-      const warnings = buildRouteWarnings(coords, incidents);
-      const estimatedMinutes = Math.round(baseMinutes + floodExposure * 3);
+      const analysis = analyzeRoute(coords, incidents, distanceKm, baseMinutes);
+      const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
 
       const isFirst = index === 0;
-      const isLowExposure = floodExposure < 1;
 
       let name = isFirst
-        ? isLowExposure
+        ? analysis.floodRisk === "LOW"
           ? "Direct Safe Route"
           : "Primary Driving Route"
         : `Alternate Route ${index}`;
-      let summary = isLowExposure
+
+      let summary = analysis.floodRisk === "LOW"
         ? "Clear roads based on reported flood markers"
-        : `Passes near flood points (${warnings.length} caution warnings)`;
+        : `Passes near flood points (${analysis.affectedIncidentsCount} cautions)`;
 
       return {
         id: `osrm-route-${index}`,
@@ -108,48 +278,40 @@ export async function calculateRoadRoutes(
         estimatedMinutes,
         floodExposure: Number(floodExposure.toFixed(1)),
         confidence: Math.max(40, Math.min(98, Math.round(98 - floodExposure * 8))),
-        warnings
+        warnings: analysis.riskExplanations,
+        analysis
       };
     });
 
     // Check if primary route is flooded. If so, generate an inland bypass if possible.
     const primaryRoute = routeOptions[0];
-    if (primaryRoute && primaryRoute.floodExposure > 2.5) {
+    if (primaryRoute && primaryRoute.analysis && primaryRoute.analysis.floodRisk !== "LOW") {
       const bypassRoute = buildInlandBypassRoute(origin, destination, incidents);
       routeOptions.push(bypassRoute);
     }
 
-    // Sort routes by lowest flood exposure first, then distance
+    // Rank routes: 1. Lowest flood risk, 2. Highest Health, 3. Shortest travel time, 4. Distance
+    const riskWeight = { LOW: 0, MEDIUM: 1, HIGH: 2, EXTREME: 3 };
     return routeOptions.sort((a, b) => {
-      const expDiff = a.floodExposure - b.floodExposure;
-      if (Math.abs(expDiff) > 1) return expDiff;
+      const aRisk = a.analysis?.floodRisk || "LOW";
+      const bRisk = b.analysis?.floodRisk || "LOW";
+      const riskDiff = riskWeight[aRisk] - riskWeight[bRisk];
+      if (riskDiff !== 0) return riskDiff;
+
+      const aHealth = a.analysis?.routeHealth ?? 100;
+      const bHealth = b.analysis?.routeHealth ?? 100;
+      const healthDiff = bHealth - aHealth;
+      if (healthDiff !== 0) return healthDiff;
+
+      const timeDiff = a.estimatedMinutes - b.estimatedMinutes;
+      if (timeDiff !== 0) return timeDiff;
+
       return a.distanceKm - b.distanceKm;
     });
   } catch (err) {
-    console.warn("OSRM routing failed, falling back to geometric route:", err);
+    console.warn("Routing processing error, using straight direct fallback:", err);
     return [buildFallbackDirectRoute(origin, destination, incidents)];
   }
-}
-
-function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
-  if (!incidents || incidents.length === 0) return 0;
-  let exposure = 0;
-
-  for (const incident of incidents) {
-    if (incident.status !== "active" && incident.status !== "receding") {
-      continue;
-    }
-
-    const nearestSegmentDistance = getNearestSegmentDistanceKm(incident.coordinates, route);
-    const rank = severityRank[incident.severity] || 0;
-    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
-    if (nearestSegmentDistance < impactRadiusKm) {
-      const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
-      exposure += proximity * rank * (1 + (incident.reports?.length || 0) * 0.1);
-    }
-  }
-
-  return exposure;
 }
 
 function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
@@ -193,27 +355,6 @@ function distancePointToSegmentKm(point: Coordinates, start: Coordinates, end: C
   return Math.hypot(p.x - projection.x, p.y - projection.y);
 }
 
-function buildRouteWarnings(coordinates: Coordinates[], incidents: Incident[]): string[] {
-  if (!incidents || incidents.length === 0) {
-    return ["Route clear. No active flood incidents logged."];
-  }
-
-  const nearby = incidents
-    .filter((inc) => inc.status === "active" || inc.status === "receding")
-    .filter((inc) => getNearestSegmentDistanceKm(inc.coordinates, coordinates) < 1.5)
-    .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
-    .slice(0, 3);
-
-  if (nearby.length === 0) {
-    return ["No high-severity flood incidents close to this route."];
-  }
-
-  return nearby.map(
-    (inc) =>
-      `⚠️ ${inc.roadName} (${inc.landmark}): ${inc.type} (${inc.severity})`
-  );
-}
-
 function buildFallbackDirectRoute(
   origin: Coordinates,
   destination: Coordinates,
@@ -221,8 +362,9 @@ function buildFallbackDirectRoute(
 ): RouteOption {
   const distanceKm = Number(haversineDistanceKm(origin, destination).toFixed(1));
   const coordinates = [origin, destination];
-  const floodExposure = calculateFloodExposure(coordinates, incidents);
-  const warnings = buildRouteWarnings(coordinates, incidents);
+  const baseMinutes = Math.round(distanceKm * 2.2);
+  const analysis = analyzeRoute(coordinates, incidents, distanceKm, baseMinutes);
+  const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
 
   return {
     id: "fallback-direct",
@@ -230,10 +372,11 @@ function buildFallbackDirectRoute(
     summary: "Geodesic straight line distance",
     coordinates,
     distanceKm,
-    estimatedMinutes: Math.round(distanceKm * 2.2),
-    floodExposure: Number(floodExposure.toFixed(1)),
+    estimatedMinutes,
+    floodExposure: Number(calculateFloodExposure(coordinates, incidents).toFixed(1)),
     confidence: 80,
-    warnings
+    warnings: analysis.riskExplanations,
+    analysis
   };
 }
 
@@ -248,8 +391,9 @@ function buildInlandBypassRoute(
   const coordinates = [origin, { lat: midLat, lng: midLng }, destination];
 
   const distanceKm = Number((haversineDistanceKm(origin, coordinates[1]) + haversineDistanceKm(coordinates[1], destination)).toFixed(1));
-  const floodExposure = calculateFloodExposure(coordinates, incidents);
-  const warnings = buildRouteWarnings(coordinates, incidents);
+  const baseMinutes = Math.round(distanceKm * 2.5);
+  const analysis = analyzeRoute(coordinates, incidents, distanceKm, baseMinutes);
+  const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
 
   return {
     id: "inland-bypass",
@@ -257,10 +401,11 @@ function buildInlandBypassRoute(
     summary: "Bypasses low-lying river corridors",
     coordinates,
     distanceKm,
-    estimatedMinutes: Math.round(distanceKm * 2.5),
-    floodExposure: Number(floodExposure.toFixed(1)),
+    estimatedMinutes,
+    floodExposure: Number(calculateFloodExposure(coordinates, incidents).toFixed(1)),
     confidence: 90,
-    warnings
+    warnings: analysis.riskExplanations,
+    analysis
   };
 }
 

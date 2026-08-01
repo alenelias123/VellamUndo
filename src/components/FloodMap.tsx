@@ -13,15 +13,29 @@ import {
   useMap,
   useMapEvents
 } from "react-leaflet";
-import { severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
-import type { Coordinates, Incident, RouteOption } from "@/lib/types";
+import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
+import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
+import { severityRank, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
+import type {
+  Coordinates,
+  Incident,
+  IncidentType,
+  HelpRequest,
+  ReliefCenter,
+  RouteOption,
+  SeverityLevel
+} from "@/lib/types";
 
 type FloodMapProps = {
   center: Coordinates;
   userLocation?: Coordinates;
   incidents: Incident[];
+  helpRequests?: HelpRequest[];
+  reliefCenters?: ReliefCenter[];
   selectedIncidentId?: string;
   activeRoute?: RouteOption;
+  routes?: RouteOption[];
+  onSelectRoute?: (route: RouteOption) => void;
   pendingLocation?: Coordinates;
   onSelectIncident: (id: string) => void;
   onPickLocation: (coordinates: Coordinates) => void;
@@ -29,10 +43,13 @@ type FloodMapProps = {
 
 export function FloodMap({
   center,
-  userLocation,
   incidents,
+  helpRequests,
+  reliefCenters,
   selectedIncidentId,
   activeRoute,
+  routes = [],
+  onSelectRoute,
   pendingLocation,
   onSelectIncident,
   onPickLocation
@@ -51,38 +68,53 @@ export function FloodMap({
       />
       <MapClickHandler onPickLocation={onPickLocation} />
       <MapViewController center={center} />
+      <RouteViewController activeRoute={activeRoute} />
 
-      {userLocation ? (
-        <CircleMarker
-          center={toLatLng(userLocation)}
-          radius={9}
-          pathOptions={{
-            color: "#ffffff",
-            fillColor: "#2563eb",
-            fillOpacity: 0.95,
-            opacity: 1,
-            weight: 3
-          }}
-        >
-          <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
-            You are here
-          </Tooltip>
-        </CircleMarker>
-      ) : null}
+      {/* Render all calculated driving routes */}
+      {routes.map((routeOption) => {
+        const isSelected = activeRoute?.id === routeOption.id;
+        // Fade non-selected routes if one is active, otherwise draw semi-bold
+        const isFaded = activeRoute && !isSelected;
+        const opacity = isSelected ? 0.95 : isFaded ? 0.22 : 0.6;
+        const weight = isSelected ? 7 : 4;
+        
+        let color = "#64748b"; // default slate gray
+        if (isSelected) {
+          const risk = routeOption.analysis?.floodRisk || "LOW";
+          if (risk === "LOW") color = "#157f3b"; // green
+          else if (risk === "MEDIUM") color = "#0284c7"; // blue
+          else if (risk === "HIGH") color = "#ea580c"; // orange
+          else color = "#b91c1c"; // extreme red
+        }
 
-      {activeRoute ? (
-        <Polyline
-          positions={activeRoute.coordinates.map(toLatLng)}
-          pathOptions={{
-            color: activeRoute.floodExposure > 5 ? "#b33b23" : "#2458b8",
-            opacity: 0.9,
-            weight: 6
-          }}
-        >
-          <Tooltip sticky>{activeRoute.name}</Tooltip>
-        </Polyline>
-      ) : null}
+        return (
+          <Polyline
+            key={routeOption.id}
+            positions={routeOption.coordinates.map(toLatLng)}
+            pathOptions={{
+              color,
+              opacity,
+              weight,
+              lineCap: "round",
+              lineJoin: "round"
+            }}
+            eventHandlers={{
+              click: () => onSelectRoute && onSelectRoute(routeOption)
+            }}
+          >
+            <Tooltip sticky>
+              <strong>{routeOption.name}</strong>
+              <br />
+              <span>{routeOption.distanceKm} km · {routeOption.estimatedMinutes} min</span>
+              {routeOption.analysis && (
+                <span> · Risk: {routeOption.analysis.floodRisk} ({routeOption.analysis.routeHealth}% Health)</span>
+              )}
+            </Tooltip>
+          </Polyline>
+        );
+      })}
 
+      {/* Render incident markers */}
       {incidents
         .filter((inc) => inc.status !== "archived")
         .map((incident) => {
@@ -90,11 +122,19 @@ export function FloodMap({
           const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: "📍" };
           const isSelected = incident.id === selectedIncidentId;
 
+          // Check if this incident lies along the selected active route path
+          const isIncidentOnSelectedRoute = activeRoute?.analysis?.affectedIncidents.some(
+            (ai) => ai.id === incident.id
+          );
+
+          // Highlight markers that are along the path of the selected route
+          const pulseClass = isIncidentOnSelectedRoute ? "animate-pulse" : "";
+
           return (
             <Marker
               key={incident.id}
               position={toLatLng(incident.coordinates)}
-              icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected)}
+              icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected, isIncidentOnSelectedRoute)}
               eventHandlers={{
                 click: () => onSelectIncident(incident.id)
               }}
@@ -121,6 +161,48 @@ export function FloodMap({
             </Marker>
           );
         })}
+
+      {/* Render relief centers */}
+      {reliefCenters?.map((centerItem) => {
+        const meta = reliefCenterTypeMeta[centerItem.type];
+
+        return (
+          <Marker
+            key={centerItem.id}
+            position={toLatLng(centerItem.coordinates)}
+            icon={makeTextIcon("center", meta.label.slice(0, 1), meta.color)}
+          >
+            <Popup>
+              <div className="map-popup">
+                <strong>{centerItem.name}</strong>
+                <span>{meta.label}</span>
+                <span>{Math.max(0, centerItem.capacity - centerItem.occupancy)} spaces available</span>
+                <span>{centerItem.contact}</span>
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
+
+      {/* Render help requests */}
+      {helpRequests
+        ?.filter((request) => request.status !== "completed")
+        .map((request) => (
+          <Marker
+            key={request.id}
+            position={toLatLng(request.coordinates)}
+            icon={makeTextIcon("help", helpTypeMeta[request.type].label.slice(0, 1), priorityMeta[request.priority].color)}
+          >
+            <Popup>
+              <div className="map-popup">
+                <strong>{helpTypeMeta[request.type].label} request</strong>
+                <span>{request.locationName}</span>
+                <span>{priorityMeta[request.priority].label} priority</span>
+                <span>{request.peopleCount} people</span>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
 
       {pendingLocation ? (
         <Marker
@@ -161,11 +243,29 @@ function MapViewController({ center }: { center: Coordinates }) {
   return null;
 }
 
+function RouteViewController({ activeRoute }: { activeRoute?: RouteOption }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (activeRoute && activeRoute.coordinates.length > 0) {
+      const latLngs = activeRoute.coordinates.map((c) => [c.lat, c.lng] as [number, number]);
+      const bounds = L.latLngBounds(latLngs);
+      map.fitBounds(bounds, {
+        padding: [60, 60],
+        maxZoom: 13,
+        duration: 0.8
+      });
+    }
+  }, [activeRoute, map]);
+
+  return null;
+}
+
 function toLatLng(coordinates: Coordinates): [number, number] {
   return [coordinates.lat, coordinates.lng];
 }
 
-function makeTextIcon(kind: "pending", text: string, color: string) {
+function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: string) {
   return L.divIcon({
     className: `vu-map-icon vu-map-icon--${kind}`,
     html: `<span style="background:${color}">${text}</span>`,
@@ -175,10 +275,12 @@ function makeTextIcon(kind: "pending", text: string, color: string) {
   });
 }
 
-function makeIncidentIcon(emoji: string, color: string, isSelected: boolean) {
+function makeIncidentIcon(emoji: string, color: string, isSelected: boolean, isIncidentOnSelectedRoute?: boolean) {
   const size = isSelected ? 40 : 32;
-  const padding = isSelected ? 8 : 6;
   const borderSize = isSelected ? "3px" : "2px";
+  const glowShadow = isIncidentOnSelectedRoute
+    ? `box-shadow: 0 0 12px 6px ${color};`
+    : `box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);`;
 
   return L.divIcon({
     className: "vu-incident-icon",
@@ -192,7 +294,7 @@ function makeIncidentIcon(emoji: string, color: string, isSelected: boolean) {
       align-items: center; 
       justify-content: center; 
       font-size: ${isSelected ? "20px" : "16px"};
-      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+      ${glowShadow}
       transform: scale(${isSelected ? 1.15 : 1.0});
       transition: all 0.2s ease-out;
     ">${emoji}</div>`,

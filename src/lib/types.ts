@@ -153,6 +153,18 @@ export type RoutePlace = {
   coordinates: Coordinates;
 };
 
+export type RouteAnalysis = {
+  floodRisk: "LOW" | "MEDIUM" | "HIGH" | "EXTREME";
+  routeHealth: number; // 0 - 100
+  affectedIncidentsCount: number;
+  highestIncidentSeverity: SeverityLevel | "SAFE";
+  averageConfidence: number;
+  lastUpdated: string;
+  estimatedDelayMinutes: number;
+  affectedIncidents: Incident[];
+  riskExplanations: string[];
+};
+
 export type RouteOption = {
   id: string;
   name: string;
@@ -163,6 +175,7 @@ export type RouteOption = {
   floodExposure: number;
   confidence: number;
   warnings: string[];
+  analysis?: RouteAnalysis;
 };
 
 export type AnalyticsSnapshot = {
