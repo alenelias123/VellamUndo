@@ -1,20 +1,24 @@
 import { NextResponse } from "next/server";
-import { demoFloodReports } from "@/lib/demo-data";
-import { buildRouteOptions, routePlaces } from "@/lib/routing";
+import { calculateRoadRoutes } from "@/lib/routing";
+import { fetchReportsFromSupabase } from "@/lib/supabase";
+import type { Coordinates } from "@/lib/types";
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    sourceId?: string;
-    destinationId?: string;
-  };
-  const source = routePlaces.find((place) => place.id === body.sourceId);
-  const destination = routePlaces.find((place) => place.id === body.destinationId);
+  try {
+    const body = (await request.json()) as {
+      origin?: Coordinates;
+      destination?: Coordinates;
+    };
 
-  if (!source || !destination) {
-    return NextResponse.json({ error: "Invalid source or destination" }, { status: 400 });
+    if (!body.origin || !body.destination) {
+      return NextResponse.json({ error: "Missing origin or destination coordinates" }, { status: 400 });
+    }
+
+    const reports = (await fetchReportsFromSupabase()) || [];
+    const routes = await calculateRoadRoutes(body.origin, body.destination, reports);
+
+    return NextResponse.json({ routes });
+  } catch (error) {
+    return NextResponse.json({ error: "Route calculation failed" }, { status: 500 });
   }
-
-  return NextResponse.json({
-    routes: buildRouteOptions(source, destination, demoFloodReports)
-  });
 }

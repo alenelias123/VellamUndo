@@ -1,102 +1,151 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, Clock3, Navigation2, Route, ShieldCheck } from "lucide-react";
-import { buildRouteOptions, routePlaces } from "@/lib/routing";
-import type { FloodReport, RouteOption } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Clock3, Navigation2, Route, Search, ShieldCheck } from "lucide-react";
+import { calculateRoadRoutes, geocodeDestination, type SearchResultPlace } from "@/lib/routing";
+import type { Coordinates, FloodReport, RouteOption } from "@/lib/types";
 
 type SafeRoutePlannerProps = {
+  userLocation: Coordinates | null;
   reports: FloodReport[];
   activeRoute?: RouteOption;
+  onDestinationSelect: (place: SearchResultPlace | null) => void;
   onRouteChange: (route?: RouteOption) => void;
 };
 
-export function SafeRoutePlanner({ reports, activeRoute, onRouteChange }: SafeRoutePlannerProps) {
-  const [sourceId, setSourceId] = useState(routePlaces[0].id);
-  const [destinationId, setDestinationId] = useState(routePlaces[1].id);
+export function SafeRoutePlanner({
+  userLocation,
+  reports,
+  activeRoute,
+  onDestinationSelect,
+  onRouteChange
+}: SafeRoutePlannerProps) {
+  const [destinationQuery, setDestinationQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResultPlace[]>([]);
+  const [selectedDestination, setSelectedDestination] = useState<SearchResultPlace | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [routes, setRoutes] = useState<RouteOption[]>([]);
 
-  const source = routePlaces.find((place) => place.id === sourceId) ?? routePlaces[0];
-  const destination =
-    routePlaces.find((place) => place.id === destinationId) ?? routePlaces[1];
+  // Default origin: User live GPS location or Kochi fallback
+  const origin: Coordinates = userLocation || { lat: 9.9769, lng: 76.2824 };
 
-  const routeOptions = useMemo(() => {
-    if (source.id === destination.id) {
-      return [];
+  // Geocode search
+  async function handleSearch(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!destinationQuery.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const results = await geocodeDestination(destinationQuery);
+      setSearchResults(results);
+      if (results.length > 0) {
+        selectDestination(results[0]);
+      }
+    } finally {
+      setIsSearching(false);
     }
+  }
 
-    return buildRouteOptions(source, destination, reports);
-  }, [destination, reports, source]);
+  async function selectDestination(place: SearchResultPlace) {
+    setSelectedDestination(place);
+    setSearchResults([]);
+    setDestinationQuery(place.name);
+    onDestinationSelect(place);
 
-  function planSafestRoute() {
-    onRouteChange(routeOptions[0]);
+    // Calculate OSRM routes
+    setIsCalculating(true);
+    try {
+      const computedRoutes = await calculateRoadRoutes(origin, place.coordinates, reports);
+      setRoutes(computedRoutes);
+      if (computedRoutes.length > 0) {
+        onRouteChange(computedRoutes[0]);
+      }
+    } finally {
+      setIsCalculating(false);
+    }
   }
 
   return (
-    <section className="panel-stack" aria-label="Safe route planner">
+    <section className="panel-stack google-maps-panel" aria-label="Google Maps Route Navigation">
       <div className="panel-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Re-navigation</p>
-            <h2>Find safer route</h2>
+            <p className="eyebrow">Google Maps Directions</p>
+            <h2>Destination Navigation</h2>
           </div>
-          <Navigation2 size={20} />
+          <Navigation2 size={20} className="brand-accent" />
         </div>
 
-        <div className="form-grid">
-          <label className="span-2">
-            Source
-            <select value={sourceId} onChange={(event) => setSourceId(event.target.value)}>
-              {routePlaces.map((place) => (
-                <option key={place.id} value={place.id}>
-                  {place.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        {/* Origin Pill */}
+        <div className="location-pill-row">
+          <span className="pill-dot origin-dot"></span>
+          <span className="pill-label">
+            <strong>Origin:</strong> {userLocation ? "Your Realtime Location (GPS)" : "Kochi (Default)"}
+          </span>
+        </div>
 
-          <label className="span-2">
-            Destination
-            <select
-              value={destinationId}
-              onChange={(event) => setDestinationId(event.target.value)}
-            >
-              {routePlaces.map((place) => (
-                <option key={place.id} value={place.id}>
-                  {place.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        {/* Destination Search Form */}
+        <form className="destination-search-form" onSubmit={handleSearch}>
+          <div className="search-input-wrapper">
+            <Search size={18} className="search-icon" />
+            <input
+              type="text"
+              placeholder="Search destination (e.g. Aluva, Marine Drive, Thrissur)..."
+              value={destinationQuery}
+              onChange={(e) => setDestinationQuery(e.target.value)}
+            />
+          </div>
 
-          <button
-            className="primary-action span-2"
-            type="button"
-            disabled={routeOptions.length === 0}
-            onClick={planSafestRoute}
-          >
-            <Route size={17} />
-            Calculate route
+          <button className="primary-action destination-search-btn" type="submit" disabled={isSearching}>
+            {isSearching ? "Searching..." : "Search Destination"}
           </button>
-        </div>
+        </form>
+
+        {/* Search Results Dropdown */}
+        {searchResults.length > 0 ? (
+          <ul className="search-results-list">
+            {searchResults.map((result) => (
+              <li key={result.id}>
+                <button type="button" onClick={() => selectDestination(result)}>
+                  <strong>📍 {result.name}</strong>
+                  <small>{result.fullName}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
+      {/* Calculated Routes List */}
       <div className="panel-section route-options">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Options</p>
-            <h2>Flood exposure</h2>
+            <p className="eyebrow">Routes</p>
+            <h2>Flood-Avoidance Driving Options</h2>
           </div>
           {activeRoute ? (
-            <button type="button" className="text-button" onClick={() => onRouteChange(undefined)}>
-              Clear
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                onRouteChange(undefined);
+                setSelectedDestination(null);
+                onDestinationSelect(null);
+                setRoutes([]);
+              }}
+            >
+              Clear Route
             </button>
           ) : null}
         </div>
 
-        {routeOptions.length === 0 ? (
-          <p className="muted">Choose two different places to compare routes.</p>
+        {isCalculating ? (
+          <div className="loading-routes">Calculating safe road polylines via OSRM...</div>
+        ) : routes.length === 0 ? (
+          <p className="muted">Search and select a destination to compute flood-safe driving routes.</p>
         ) : (
-          routeOptions.map((option, index) => (
+          routes.map((option, index) => (
             <button
               type="button"
               className={`route-card ${activeRoute?.id === option.id ? "is-active" : ""}`}
@@ -108,7 +157,7 @@ export function SafeRoutePlanner({ reports, activeRoute, onRouteChange }: SafeRo
                 {index === 0 ? (
                   <span className="safe-badge">
                     <ShieldCheck size={14} />
-                    Safest
+                    Recommended
                   </span>
                 ) : null}
               </span>
@@ -122,12 +171,14 @@ export function SafeRoutePlanner({ reports, activeRoute, onRouteChange }: SafeRo
                   <Clock3 size={14} />
                   {option.estimatedMinutes} min
                 </span>
-                <span>
+                <span className={option.floodExposure > 3 ? "danger-exposure" : "safe-exposure"}>
                   <AlertTriangle size={14} />
-                  {option.floodExposure} exposure
+                  {option.floodExposure} flood risk
                 </span>
               </span>
-              <span className="route-warning">{option.warnings[0]}</span>
+              {option.warnings.length > 0 ? (
+                <span className="route-warning">{option.warnings[0]}</span>
+              ) : null}
             </button>
           ))
         )}

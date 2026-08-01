@@ -13,46 +13,47 @@ import {
   useMap,
   useMapEvents
 } from "react-leaflet";
-import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
-import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
 import { severityMeta } from "@/lib/floodReports";
 import type {
   Coordinates,
   FloodReport,
-  HelpRequest,
-  ReliefCenter,
   RouteOption
 } from "@/lib/types";
+import { Trash2 } from "lucide-react";
 
 type FloodMapProps = {
   center: Coordinates;
+  userLocation: Coordinates | null;
   reports: FloodReport[];
-  helpRequests: HelpRequest[];
-  reliefCenters: ReliefCenter[];
   selectedReportId?: string;
   activeRoute?: RouteOption;
-  pendingLocation?: Coordinates;
+  destinationLocation?: Coordinates | null;
+  pendingLocation?: Coordinates | null;
+  isAdmin: boolean;
   onSelectReport: (reportId: string) => void;
+  onDeleteReport: (reportId: string) => void;
   onPickLocation: (coordinates: Coordinates) => void;
 };
 
 export function FloodMap({
   center,
+  userLocation,
   reports,
-  helpRequests,
-  reliefCenters,
   selectedReportId,
   activeRoute,
+  destinationLocation,
   pendingLocation,
+  isAdmin,
   onSelectReport,
+  onDeleteReport,
   onPickLocation
 }: FloodMapProps) {
   return (
     <MapContainer
       center={[center.lat, center.lng]}
-      zoom={10}
+      zoom={12}
       scrollWheelZoom
-      className="flood-map"
+      className="flood-map google-map-theme"
       zoomControl={false}
     >
       <TileLayer
@@ -62,19 +63,62 @@ export function FloodMap({
       <MapClickHandler onPickLocation={onPickLocation} />
       <MapViewController center={center} />
 
+      {/* User Realtime Geolocation Pulse Marker */}
+      {userLocation ? (
+        <Marker
+          position={toLatLng(userLocation)}
+          icon={makeUserLocationIcon()}
+          zIndexOffset={1000}
+        >
+          <Popup>
+            <div className="map-popup user-location-popup">
+              <strong>📍 You are here</strong>
+              <span>Live GPS position</span>
+            </div>
+          </Popup>
+          <Tooltip direction="top" offset={[0, -10]}>
+            Your Current Location (Live)
+          </Tooltip>
+        </Marker>
+      ) : null}
+
+      {/* Destination Marker */}
+      {destinationLocation ? (
+        <Marker
+          position={toLatLng(destinationLocation)}
+          icon={makeDestinationIcon()}
+          zIndexOffset={900}
+        >
+          <Popup>
+            <div className="map-popup">
+              <strong>🎯 Destination</strong>
+            </div>
+          </Popup>
+          <Tooltip direction="top" permanent offset={[0, -14]}>
+            Destination
+          </Tooltip>
+        </Marker>
+      ) : null}
+
+      {/* Active Navigation Route */}
       {activeRoute ? (
         <Polyline
           positions={activeRoute.coordinates.map(toLatLng)}
           pathOptions={{
-            color: activeRoute.floodExposure > 5 ? "#b33b23" : "#2458b8",
+            color: activeRoute.floodExposure > 3 ? "#dc2626" : "#2563eb",
             opacity: 0.9,
-            weight: 6
+            weight: 7,
+            lineCap: "round",
+            lineJoin: "round"
           }}
         >
-          <Tooltip sticky>{activeRoute.name}</Tooltip>
+          <Tooltip sticky>
+            {activeRoute.name} • {activeRoute.distanceKm} km ({activeRoute.estimatedMinutes} mins)
+          </Tooltip>
         </Polyline>
       ) : null}
 
+      {/* Flood Reports Markers */}
       {reports.map((report) => {
         const meta = severityMeta[report.severity];
         const isSelected = report.id === selectedReportId;
@@ -83,11 +127,11 @@ export function FloodMap({
           <CircleMarker
             key={report.id}
             center={toLatLng(report.coordinates)}
-            radius={isSelected ? 14 : 10}
+            radius={isSelected ? 16 : 11}
             pathOptions={{
               color: "#ffffff",
               fillColor: meta.color,
-              fillOpacity: isSelected ? 0.95 : 0.82,
+              fillOpacity: isSelected ? 0.95 : 0.85,
               opacity: 1,
               weight: isSelected ? 4 : 2
             }}
@@ -96,67 +140,55 @@ export function FloodMap({
             }}
           >
             <Popup>
-              <div className="map-popup">
-                <strong>{report.roadName}</strong>
-                <span>{report.locationName}</span>
-                <span>{meta.label}</span>
-                <span>{report.waterLevelCm} cm reported water level</span>
+              <div className="map-popup flood-report-popup">
+                <div className="popup-header">
+                  <strong>{report.roadName}</strong>
+                  <span
+                    className="severity-badge"
+                    style={{ background: meta.background, color: meta.color }}
+                  >
+                    {meta.label}
+                  </span>
+                </div>
+                <p className="location-sub">{report.locationName}</p>
+                <div className="water-level">
+                  💧 <strong>{report.waterLevelCm} cm</strong> water level
+                </div>
+                {report.description ? <p className="desc">{report.description}</p> : null}
+                <div className="meta-info">
+                  <small>Reported by {report.createdBy}</small>
+                </div>
+
+                {/* Admin Delete Action */}
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    className="delete-report-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteReport(report.id);
+                    }}
+                  >
+                    <Trash2 size={14} /> Delete Report (Admin)
+                  </button>
+                ) : null}
               </div>
             </Popup>
             <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
-              {report.roadName}: {meta.shortLabel}
+              ⚠️ {report.roadName}: {meta.shortLabel} ({report.waterLevelCm}cm)
             </Tooltip>
           </CircleMarker>
         );
       })}
 
-      {reliefCenters.map((centerItem) => {
-        const meta = reliefCenterTypeMeta[centerItem.type];
-
-        return (
-          <Marker
-            key={centerItem.id}
-            position={toLatLng(centerItem.coordinates)}
-            icon={makeTextIcon("center", meta.label.slice(0, 1), meta.color)}
-          >
-            <Popup>
-              <div className="map-popup">
-                <strong>{centerItem.name}</strong>
-                <span>{meta.label}</span>
-                <span>{Math.max(0, centerItem.capacity - centerItem.occupancy)} spaces available</span>
-                <span>{centerItem.contact}</span>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
-
-      {helpRequests
-        .filter((request) => request.status !== "completed")
-        .map((request) => (
-          <Marker
-            key={request.id}
-            position={toLatLng(request.coordinates)}
-            icon={makeTextIcon("help", helpTypeMeta[request.type].label.slice(0, 1), priorityMeta[request.priority].color)}
-          >
-            <Popup>
-              <div className="map-popup">
-                <strong>{helpTypeMeta[request.type].label} request</strong>
-                <span>{request.locationName}</span>
-                <span>{priorityMeta[request.priority].label} priority</span>
-                <span>{request.peopleCount} people</span>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
-
+      {/* Pending Tapped Location Marker */}
       {pendingLocation ? (
         <Marker
           position={toLatLng(pendingLocation)}
-          icon={makeTextIcon("pending", "+", "#111827")}
+          icon={makeTextIcon("pending", "📍", "#2563eb")}
         >
-          <Tooltip direction="top" permanent>
-            New report location
+          <Tooltip direction="top" permanent offset={[0, -14]}>
+            Selected Location
           </Tooltip>
         </Marker>
       ) : null}
@@ -182,7 +214,7 @@ function MapViewController({ center }: { center: Coordinates }) {
 
   useEffect(() => {
     map.flyTo([center.lat, center.lng], map.getZoom(), {
-      duration: 0.6
+      duration: 0.8
     });
   }, [center.lat, center.lng, map]);
 
@@ -193,12 +225,36 @@ function toLatLng(coordinates: Coordinates): [number, number] {
   return [coordinates.lat, coordinates.lng];
 }
 
-function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: string) {
+// User location icon (Google Maps style pulsing blue dot)
+function makeUserLocationIcon() {
+  return L.divIcon({
+    className: "google-user-location-marker",
+    html: `
+      <div className="user-dot-wrapper">
+        <div className="user-dot-pulse"></div>
+        <div className="user-dot"></div>
+      </div>
+    `,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+}
+
+// Destination pin icon
+function makeDestinationIcon() {
+  return L.divIcon({
+    className: "google-destination-marker",
+    html: `<div style="background:#dc2626; color:white; border-radius:50%; width:30px; height:30px; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 10px rgba(0,0,0,0.3); font-size:16px;">🎯</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15]
+  });
+}
+
+function makeTextIcon(kind: "pending", text: string, color: string) {
   return L.divIcon({
     className: `vu-map-icon vu-map-icon--${kind}`,
-    html: `<span style="background:${color}">${text}</span>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
-    popupAnchor: [0, -14]
+    html: `<span style="background:${color}; display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%; color:white; font-size:16px; box-shadow:0 2px 8px rgba(0,0,0,0.3);">${text}</span>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
   });
 }
