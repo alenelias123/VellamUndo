@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Ambulance,
   CircleDot,
@@ -56,44 +56,100 @@ export default function HomeClient() {
   const [routesList, setRoutesList] = useState<RouteOption[]>([]);
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
+  const watchIdRef = useRef<number | null>(null);
 
-  useEffect(() => {
+  // Start or restart the GPS watch
+  const startGpsWatch = useCallback(() => {
     if (!navigator.geolocation) {
       setGeoError("Geolocation is not supported on this device.");
       return;
     }
 
-    const watchId = navigator.geolocation.watchPosition(
+    // Clear any existing watch
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    setGpsLoading(true);
+    setGeoError(null);
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
         setUserLocation({
           lat: Number(position.coords.latitude.toFixed(5)),
           lng: Number(position.coords.longitude.toFixed(5))
         });
         setGeoError(null);
+        setGpsLoading(false);
       },
-      () => {
-        setGeoError("Unable to fetch GPS location.");
+      (error) => {
+        setGpsLoading(false);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setGeoError("Location access denied. Please allow location in browser settings.");
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setGeoError("GPS signal unavailable. Move to an open area or set location manually.");
+            break;
+          case error.TIMEOUT:
+            setGeoError("GPS timed out. Retrying with low accuracy…");
+            // Fallback: try once with low accuracy
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                setUserLocation({
+                  lat: Number(pos.coords.latitude.toFixed(5)),
+                  lng: Number(pos.coords.longitude.toFixed(5))
+                });
+                setGeoError(null);
+              },
+              () => setGeoError("Could not get location. Set it manually on the map."),
+              { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+            );
+            break;
+          default:
+            setGeoError("Unable to fetch GPS location. Set it manually on the map.");
+        }
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 20000
+        maximumAge: 5000,
+        timeout: 15000
       }
     );
-
-    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
+
+  // Initial GPS start
+  useEffect(() => {
+    startGpsWatch();
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recenter: restart GPS watch and fly map to user
+  const handleRecenter = useCallback(() => {
+    startGpsWatch();
+    setRecenterTrigger((n) => n + 1);
+  }, [startGpsWatch]);
 
   const selectedIncident = useMemo(() => {
     return incidents.find((inc) => inc.id === selectedIncidentId);
   }, [incidents, selectedIncidentId]);
 
   const mapCenter = useMemo(() => {
+    // recenterTrigger read here so the memo re-runs on recenter
+    void recenterTrigger;
     if (selectedIncident) return selectedIncident.coordinates;
     if (pendingLocation) return pendingLocation;
     if (userLocation) return userLocation;
     return DEFAULT_KOCHI_COORDS;
-  }, [selectedIncident, pendingLocation, userLocation]);
+  }, [selectedIncident, pendingLocation, userLocation, recenterTrigger]);
 
   const severeIncidents = useMemo(() => {
     return [...incidents]
@@ -190,6 +246,8 @@ export default function HomeClient() {
               routes={routesList}
               onSelectRoute={handleRouteChange}
               pendingLocation={pendingLocation}
+              gpsLoading={gpsLoading}
+              onRecenter={handleRecenter}
               onSelectIncident={(id) => {
                 setSelectedIncidentId(id);
                 setPendingLocation(undefined);
@@ -323,9 +381,11 @@ export default function HomeClient() {
       </main>
 
       <div className="px-5 pb-3 text-xs font-semibold text-gray-600">
-        {userLocation
+        {gpsLoading
+          ? "🛰 Acquiring GPS…"
+          : userLocation
           ? `GPS live: ${userLocation.lat}, ${userLocation.lng}`
-          : geoError || "Fetching live GPS location..."}
+          : geoError || "Fetching live GPS location…"}
       </div>
     </div>
   );
