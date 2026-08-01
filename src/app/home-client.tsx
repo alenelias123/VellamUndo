@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Ambulance,
   Building2,
@@ -23,6 +23,8 @@ import { useEmergencyStore } from "@/hooks/useEmergencyStore";
 import { defaultDistrictSlug, districts, getDistrictBySlug } from "@/lib/districts";
 import { severityRank, severityMeta, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
 import type { Coordinates, RouteOption } from "@/lib/types";
+
+const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
 
 const FloodMap = dynamic(() => import("@/components/FloodMap").then((mod) => mod.FloodMap), {
   ssr: false,
@@ -63,8 +65,37 @@ export default function HomeClient() {
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
+  const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
 
   const activeDistrict = getDistrictBySlug(activeDistrictSlug);
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setGeoError("Geolocation is not supported on this device.");
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        setUserLocation({
+          lat: Number(position.coords.latitude.toFixed(5)),
+          lng: Number(position.coords.longitude.toFixed(5))
+        });
+        setGeoError(null);
+      },
+      () => {
+        setGeoError("Unable to fetch GPS location.");
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 20000
+      }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
   
   const selectedIncident = useMemo(() => {
     return incidents.find((inc) => inc.id === selectedIncidentId);
@@ -74,8 +105,9 @@ export default function HomeClient() {
   const mapCenter = useMemo(() => {
     if (selectedIncident) return selectedIncident.coordinates;
     if (pendingLocation) return pendingLocation;
+    if (userLocation) return userLocation;
     return activeDistrict.center;
-  }, [selectedIncident, pendingLocation, activeDistrict]);
+  }, [selectedIncident, pendingLocation, userLocation, activeDistrict]);
 
   // Calculate watchlist (highest severity active incidents)
   const severeIncidents = useMemo(() => {
@@ -184,6 +216,7 @@ export default function HomeClient() {
           <div className="map-frame">
             <FloodMap
               center={mapCenter}
+              userLocation={userLocation || undefined}
               incidents={incidents}
               helpRequests={helpRequests}
               reliefCenters={reliefCenters}
@@ -307,7 +340,7 @@ export default function HomeClient() {
 
               {activePanel === "route" ? (
                 <SafeRoutePlanner
-                  userLocation={pendingLocation || null}
+                  userLocation={userLocation}
                   incidents={incidents}
                   activeRoute={activeRoute}
                   onDestinationSelect={() => {}}
@@ -342,6 +375,11 @@ export default function HomeClient() {
           )}
         </aside>
       </main>
+      <div className="px-5 pb-3 text-xs font-semibold text-gray-600">
+        {userLocation
+          ? `GPS live: ${userLocation.lat}, ${userLocation.lng}`
+          : geoError || "Fetching live GPS location..."}
+      </div>
     </div>
   );
 }
