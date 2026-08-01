@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Clock3, Navigation2, Route, Search, ShieldCheck } from "lucide-react";
-import { calculateRoadRoutes, geocodeDestination, type SearchResultPlace } from "@/lib/routing";
+import {
+  calculateRoadRoutes,
+  geocodeDestination,
+  haversineDistanceKm,
+  type SearchResultPlace
+} from "@/lib/routing";
 import type { Coordinates, Incident, RouteOption } from "@/lib/types";
+
+const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
 
 type SafeRoutePlannerProps = {
   userLocation: Coordinates | null;
@@ -26,9 +33,25 @@ export function SafeRoutePlanner({
   const [isSearching, setIsSearching] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
+  const lastRerouteOriginRef = useRef<Coordinates | null>(null);
+  const lastRerouteAtRef = useRef<number>(0);
+  const lastIncidentsKeyRef = useRef<string>("");
+  const rerouteRequestIdRef = useRef<number>(0);
 
   // Default origin: User live GPS location or Kochi fallback
-  const origin: Coordinates = userLocation || { lat: 9.9769, lng: 76.2824 };
+  const origin = useMemo(
+    () => userLocation || DEFAULT_KOCHI_COORDS,
+    [userLocation]
+  );
+  const incidentsKey = useMemo(
+    () =>
+      incidents
+        .filter((inc) => inc.status === "active" || inc.status === "receding")
+        .map((inc) => `${inc.id}:${inc.status}:${inc.severity}:${inc.updatedAt}`)
+        .sort()
+        .join("|"),
+    [incidents]
+  );
 
   // Geocode search
   async function handleSearch(e?: React.FormEvent) {
@@ -61,10 +84,57 @@ export function SafeRoutePlanner({
       if (computedRoutes.length > 0) {
         onRouteChange(computedRoutes[0]);
       }
+      lastRerouteOriginRef.current = origin;
+      lastRerouteAtRef.current = Date.now();
+      lastIncidentsKeyRef.current = incidentsKey;
     } finally {
       setIsCalculating(false);
     }
   }
+
+  useEffect(() => {
+    if (!selectedDestination) return;
+
+    const now = Date.now();
+    const movedKm = lastRerouteOriginRef.current
+      ? haversineDistanceKm(lastRerouteOriginRef.current, origin)
+      : Number.POSITIVE_INFINITY;
+    const incidentsChanged = incidentsKey !== lastIncidentsKeyRef.current;
+    const shouldReroute =
+      movedKm >= 0.05 || incidentsChanged || routes.length === 0 || !activeRoute;
+    const tooSoonFromLastReroute = now - lastRerouteAtRef.current < 8000;
+
+    if (!shouldReroute || (tooSoonFromLastReroute && !incidentsChanged)) {
+      return;
+    }
+
+    const requestId = rerouteRequestIdRef.current + 1;
+    rerouteRequestIdRef.current = requestId;
+    setIsCalculating(true);
+
+    void (async () => {
+      try {
+        const computedRoutes = await calculateRoadRoutes(
+          origin,
+          selectedDestination.coordinates,
+          incidents
+        );
+        if (rerouteRequestIdRef.current !== requestId) return;
+
+        setRoutes(computedRoutes);
+        if (computedRoutes.length > 0) {
+          onRouteChange(computedRoutes[0]);
+        }
+        lastRerouteOriginRef.current = origin;
+        lastRerouteAtRef.current = Date.now();
+        lastIncidentsKeyRef.current = incidentsKey;
+      } finally {
+        if (rerouteRequestIdRef.current === requestId) {
+          setIsCalculating(false);
+        }
+      }
+    })();
+  }, [activeRoute, incidents, incidentsKey, onRouteChange, origin, routes.length, selectedDestination]);
 
   return (
     <section className="panel-stack google-maps-panel" aria-label="Google Maps Route Navigation">
@@ -133,6 +203,9 @@ export function SafeRoutePlanner({
                 setSelectedDestination(null);
                 onDestinationSelect(null);
                 setRoutes([]);
+                lastRerouteOriginRef.current = null;
+                lastRerouteAtRef.current = 0;
+                lastIncidentsKeyRef.current = "";
               }}
             >
               Clear Route

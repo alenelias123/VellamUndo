@@ -28,6 +28,7 @@ import type {
 
 type FloodMapProps = {
   center: Coordinates;
+  userLocation?: Coordinates;
   incidents: Incident[];
   helpRequests: HelpRequest[];
   reliefCenters: ReliefCenter[];
@@ -40,6 +41,7 @@ type FloodMapProps = {
 
 export function FloodMap({
   center,
+  userLocation,
   incidents,
   helpRequests,
   reliefCenters,
@@ -63,6 +65,24 @@ export function FloodMap({
       />
       <MapClickHandler onPickLocation={onPickLocation} />
       <MapViewController center={center} />
+
+      {userLocation ? (
+        <CircleMarker
+          center={toLatLng(userLocation)}
+          radius={9}
+          pathOptions={{
+            color: "#ffffff",
+            fillColor: "#2563eb",
+            fillOpacity: 0.95,
+            opacity: 1,
+            weight: 3
+          }}
+        >
+          <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
+            You are here
+          </Tooltip>
+        </CircleMarker>
+      ) : null}
 
       {activeRoute ? (
         <Polyline
