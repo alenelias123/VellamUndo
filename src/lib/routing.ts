@@ -8,194 +8,346 @@ export type SearchResultPlace = {
   coordinates: Coordinates;
 };
 
-// In-memory cache for OSRM raw route geometries to avoid redundant slow requests
-const osrmGeometryCache = new Map<string, any>();
+// ── Cache ─────────────────────────────────────────────────────────────────────
+// Cache raw OSRM responses by waypoint string so identical requests are instant.
+const osrmCache = new Map<string, any>();
 
-// Search places using OpenStreetMap Nominatim API
+// ── Geocoding ─────────────────────────────────────────────────────────────────
 export async function geocodeDestination(query: string): Promise<SearchResultPlace[]> {
   if (!query || query.trim().length < 2) return [];
-
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
       query.trim()
     )}&limit=6&countrycodes=in`;
-    const response = await fetch(url, {
-      headers: {
-        "Accept-Language": "en-US,en"
-      }
-    });
-
+    const response = await fetch(url, { headers: { "Accept-Language": "en-US,en" } });
     if (!response.ok) return [];
-
     const data = await response.json();
     return data.map((item: any) => ({
       id: item.place_id ? String(item.place_id) : `place-${Math.random()}`,
       name: item.display_name.split(",")[0] || item.display_name,
       fullName: item.display_name,
-      coordinates: {
-        lat: Number.parseFloat(item.lat),
-        lng: Number.parseFloat(item.lon)
-      }
+      coordinates: { lat: Number.parseFloat(item.lat), lng: Number.parseFloat(item.lon) }
     }));
-  } catch (error) {
-    console.warn("Geocoding failed:", error);
+  } catch (err) {
+    console.warn("Geocoding failed:", err);
     return [];
   }
 }
 
+// ── Haversine distance ────────────────────────────────────────────────────────
 export function haversineDistanceKm(start: Coordinates, end: Coordinates): number {
-  const radiusKm = 6371;
+  const R = 6371;
   const lat1 = toRadians(start.lat);
   const lat2 = toRadians(end.lat);
-  const deltaLat = toRadians(end.lat - start.lat);
-  const deltaLng = toRadians(end.lng - start.lng);
-  const haversine =
-    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
-  const angularDistance = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-
-  return radiusKm * angularDistance;
+  const dLat = toRadians(end.lat - start.lat);
+  const dLng = toRadians(end.lng - start.lng);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Check if incident is verified or reported by a volunteer
-function isVolunteerVerified(incident: Incident): boolean {
-  const hasVolReport = incident.reports?.some(
-    (r) =>
-      r.reporter.toLowerCase().includes("volunteer") ||
-      r.reporter.toLowerCase().includes("admin")
+// ── OSRM fetch (real road geometry) ──────────────────────────────────────────
+/**
+ * Fetch a real driving route from OSRM for an arbitrary list of waypoints.
+ * Returns the parsed JSON or null on failure.
+ */
+async function fetchOsrmRoute(waypoints: Coordinates[]): Promise<any | null> {
+  if (waypoints.length < 2) return null;
+
+  const coordStr = waypoints.map((c) => `${c.lng},${c.lat}`).join(";");
+  const cacheKey = coordStr;
+  if (osrmCache.has(cacheKey)) return osrmCache.get(cacheKey);
+
+  const url =
+    `https://router.project-osrm.org/route/v1/driving/${coordStr}` +
+    `?overview=full&geometries=geojson&alternatives=false&steps=false`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.code !== "Ok" || !data.routes?.length) return null;
+    osrmCache.set(cacheKey, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a single OSRM route object into a Coordinates array.
+ */
+function osrmRouteToCoords(route: any): Coordinates[] {
+  return route.geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng }));
+}
+
+// ── Detour waypoint generation ────────────────────────────────────────────────
+/**
+ * Returns two waypoint candidates on either side of the origin→destination
+ * line, at fractional position `t` along it, offset `offsetKm` perpendicularly.
+ */
+function buildPerpendicularPair(
+  origin: Coordinates,
+  destination: Coordinates,
+  t: number,
+  offsetKm: number
+): [Coordinates, Coordinates] {
+  const midLat = origin.lat + t * (destination.lat - origin.lat);
+  const midLng = origin.lng + t * (destination.lng - origin.lng);
+
+  const dLat = destination.lat - origin.lat;
+  const dLng = destination.lng - origin.lng;
+  const len = Math.hypot(dLat, dLng) || 1;
+  // Perpendicular unit vector
+  const perpLat = -dLng / len;
+  const perpLng = dLat / len;
+
+  const kmPerDegLat = 110.57;
+  const kmPerDegLng = 111.32 * Math.cos(toRadians(midLat));
+
+  const left: Coordinates = {
+    lat: midLat + perpLat * (offsetKm / kmPerDegLat),
+    lng: midLng + perpLng * (offsetKm / kmPerDegLng)
+  };
+  const right: Coordinates = {
+    lat: midLat - perpLat * (offsetKm / kmPerDegLat),
+    lng: midLng - perpLng * (offsetKm / kmPerDegLng)
+  };
+  return [left, right];
+}
+
+/**
+ * Rough similarity score between two routes based on how many sampled
+ * points from routeA land within ~300 m of routeB.
+ * Returns 0 (totally different) to 1 (identical).
+ */
+function routeSimilarity(routeA: Coordinates[], routeB: Coordinates[]): number {
+  const sampleCount = 12;
+  const stepA = Math.max(1, Math.floor(routeA.length / sampleCount));
+  let matches = 0;
+  let total = 0;
+  for (let i = 0; i < routeA.length; i += stepA) {
+    const dist = getNearestSegmentDistanceKm(routeA[i], routeB);
+    if (dist < 0.3) matches++; // within 300 m = "same road"
+    total++;
+  }
+  return total === 0 ? 0 : matches / total;
+}
+
+// ── Main entry point ──────────────────────────────────────────────────────────
+export async function calculateRoadRoutes(
+  origin: Coordinates,
+  destination: Coordinates,
+  incidents: Incident[]
+): Promise<RouteOption[]> {
+  const activeIncidents = incidents.filter(
+    (i) => i.status === "active" || i.status === "receding"
   );
-  const hasVolVerif = incident.verifications?.some(
-    (v) =>
-      v.reporter.toLowerCase().includes("volunteer") ||
-      v.reporter.toLowerCase().includes("admin")
-  );
-  return !!(hasVolReport || hasVolVerif);
-}
 
-// Calculate report age decay factor
-function getIncidentAgeFactor(updatedAtStr: string): number {
-  const elapsedMs = Date.now() - new Date(updatedAtStr).getTime();
-  const elapsedHours = Math.max(0, elapsedMs / (1000 * 60 * 60));
-  if (elapsedHours > 24) return 0.25;
-  if (elapsedHours > 12) return 0.5;
-  if (elapsedHours > 4) return 0.75;
-  return 1.0;
-}
+  // ── Step 1: Fetch primary OSRM route with alternatives ────────────────────
+  const primaryCacheKey = `${origin.lng.toFixed(5)},${origin.lat.toFixed(5)};${destination.lng.toFixed(5)},${destination.lat.toFixed(5)}`;
+  let primaryOsrm = osrmCache.get(primaryCacheKey);
 
-// Calculate enhanced flood exposure score
-export function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
-  if (!incidents || incidents.length === 0) return 0;
-  let exposure = 0;
-
-  for (const incident of incidents) {
-    // Ignore resolved and archived/false incidents
-    if (incident.status === "resolved" || incident.status === "archived") {
-      continue;
-    }
-
-    const nearestSegmentDistance = getNearestSegmentDistanceKm(incident.coordinates, route);
-    const rank = severityRank[incident.severity] || 0;
-    
-    // Safety buffer impact radius (higher severity affects wider areas)
-    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
-
-    if (nearestSegmentDistance < impactRadiusKm) {
-      const proximity = Math.max(0, 1 - nearestSegmentDistance / impactRadiusKm);
-      const ageFactor = getIncidentAgeFactor(incident.updatedAt);
-      const confidenceFactor = 1.0 + incident.confidence * 0.01; // higher confidence has higher weight
-      const volunteerFactor = isVolunteerVerified(incident) ? 1.5 : 1.0; // volunteer verified receives higher weight
-
-      exposure += proximity * rank * ageFactor * confidenceFactor * volunteerFactor;
+  if (!primaryOsrm) {
+    const coordStr = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+    const url =
+      `https://router.project-osrm.org/route/v1/driving/${coordStr}` +
+      `?overview=full&geometries=geojson&alternatives=3&steps=false`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.code === "Ok" && data.routes?.length) {
+          primaryOsrm = data;
+          osrmCache.set(primaryCacheKey, data);
+        }
+      }
+    } catch (err) {
+      console.warn("OSRM primary fetch failed:", err);
     }
   }
 
+  if (!primaryOsrm) {
+    return [buildOfflineNotice(origin, destination, activeIncidents)];
+  }
+
+  // ── Step 2: Build RouteOptions from all OSRM alternatives ─────────────────
+  const rawRoutes: RouteOption[] = primaryOsrm.routes.map((osrmRoute: any, i: number) => {
+    const coords = osrmRouteToCoords(osrmRoute);
+    const distKm = Number((osrmRoute.distance / 1000).toFixed(1));
+    const baseMin = Math.round(osrmRoute.duration / 60);
+    const analysis = analyzeRoute(coords, activeIncidents, distKm, baseMin);
+    const exposure = calculateFloodExposure(coords, activeIncidents);
+    return {
+      id: `osrm-${i}`,
+      name: i === 0 ? labelRouteName(analysis.floodRisk, false) : `Alternate Route ${i}`,
+      summary: buildSummary(analysis),
+      coordinates: coords,
+      distanceKm: distKm,
+      estimatedMinutes: baseMin + analysis.estimatedDelayMinutes,
+      floodExposure: Number(exposure.toFixed(1)),
+      confidence: Math.max(40, Math.min(98, Math.round(98 - exposure * 8))),
+      warnings: analysis.riskExplanations,
+      analysis
+    } satisfies RouteOption;
+  });
+
+  // ── Step 3: Generate systematic detour waypoints ──────────────────────────
+  // Build a grid of intermediate waypoints that force OSRM onto different
+  // road corridors. We try: both perpendicular sides × three longitudinal
+  // positions (30%, 50%, 70% along the route) × two offset magnitudes.
+  const directDistKm = haversineDistanceKm(origin, destination);
+  // Scale offsets with route distance: short trips need smaller offsets
+  const offsetsKm = directDistKm > 50 ? [8, 16] : directDistKm > 20 ? [5, 10] : [3, 6];
+  const tPositions = [0.25, 0.5, 0.75];
+
+  const waypointCandidates: Coordinates[] = [];
+  for (const t of tPositions) {
+    for (const offsetKm of offsetsKm) {
+      const [left, right] = buildPerpendicularPair(origin, destination, t, offsetKm);
+      waypointCandidates.push(left, right);
+    }
+  }
+
+  // Fetch all detour routes in parallel
+  const detourFetches = waypointCandidates.map((wp) =>
+    fetchOsrmRoute([origin, wp, destination])
+  );
+  const detourResults = await Promise.allSettled(detourFetches);
+
+  const extraRoutes: RouteOption[] = [];
+  detourResults.forEach((result, idx) => {
+    if (result.status !== "fulfilled" || !result.value) return;
+    const osrmRoute = result.value.routes[0];
+    if (!osrmRoute) return;
+
+    const coords = osrmRouteToCoords(osrmRoute);
+    const distKm = Number((osrmRoute.distance / 1000).toFixed(1));
+    const baseMin = Math.round(osrmRoute.duration / 60);
+
+    // Skip if geometry is too similar to an already-collected route (dedup)
+    const isDuplicate = [...rawRoutes, ...extraRoutes].some(
+      (existing) => routeSimilarity(existing.coordinates, coords) > 0.82
+    );
+    if (isDuplicate) return;
+
+    // Skip if it's absurdly longer than the primary (> 2.5× distance)
+    if (distKm > rawRoutes[0].distanceKm * 2.5) return;
+
+    const analysis = analyzeRoute(coords, activeIncidents, distKm, baseMin);
+    const exposure = calculateFloodExposure(coords, activeIncidents);
+
+    extraRoutes.push({
+      id: `detour-wp-${idx}`,
+      name: labelRouteName(analysis.floodRisk, true),
+      summary: buildSummary(analysis),
+      coordinates: coords,
+      distanceKm: distKm,
+      estimatedMinutes: baseMin + analysis.estimatedDelayMinutes,
+      floodExposure: Number(exposure.toFixed(1)),
+      confidence: Math.max(40, Math.min(95, Math.round(95 - exposure * 8))),
+      warnings: analysis.riskExplanations,
+      analysis
+    });
+  });
+
+  const allRoutes = [...rawRoutes, ...extraRoutes];
+
+  // ── Step 4: Sort and return ───────────────────────────────────────────────
+  return allRoutes.sort((a, b) => {
+    const rDiff =
+      riskWeight(a.analysis?.floodRisk ?? "LOW") -
+      riskWeight(b.analysis?.floodRisk ?? "LOW");
+    if (rDiff !== 0) return rDiff;
+    const hDiff = (b.analysis?.routeHealth ?? 100) - (a.analysis?.routeHealth ?? 100);
+    if (hDiff !== 0) return hDiff;
+    const tDiff = a.estimatedMinutes - b.estimatedMinutes;
+    if (tDiff !== 0) return tDiff;
+    return a.distanceKm - b.distanceKm;
+  });
+}
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+export function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
+  if (!incidents?.length) return 0;
+  let exposure = 0;
+  for (const incident of incidents) {
+    if (incident.status === "resolved" || incident.status === "archived") continue;
+    const dist = getNearestSegmentDistanceKm(incident.coordinates, route);
+    const rank = severityRank[incident.severity] || 0;
+    const radius = rank >= 3 ? 2.5 : 1.2;
+    if (dist < radius) {
+      const proximity = Math.max(0, 1 - dist / radius);
+      const age = getIncidentAgeFactor(incident.updatedAt);
+      const conf = 1.0 + incident.confidence * 0.01;
+      const vol = isVolunteerVerified(incident) ? 1.5 : 1.0;
+      exposure += proximity * rank * age * conf * vol;
+    }
+  }
   return exposure;
 }
 
-// Performs analysis step for a generated route
 export function analyzeRoute(
-  routeCoords: Coordinates[],
+  coords: Coordinates[],
   incidents: Incident[],
   distanceKm: number,
   baseMinutes: number
 ): RouteAnalysis {
-  const affectedIncidents: Incident[] = [];
-
-  for (const incident of incidents) {
-    if (incident.status === "resolved" || incident.status === "archived") {
-      continue;
-    }
-
-    const nearestDist = getNearestSegmentDistanceKm(incident.coordinates, routeCoords);
-    const rank = severityRank[incident.severity] || 0;
-    const impactRadiusKm = rank >= 3 ? 2.5 : 1.2;
-
-    if (nearestDist < impactRadiusKm) {
-      affectedIncidents.push(incident);
+  const affected: Incident[] = [];
+  for (const inc of incidents) {
+    if (inc.status === "resolved" || inc.status === "archived") continue;
+    const rank = severityRank[inc.severity] || 0;
+    const radius = rank >= 3 ? 2.5 : 1.2;
+    if (getNearestSegmentDistanceKm(inc.coordinates, coords) < radius) {
+      affected.push(inc);
     }
   }
 
-  const affectedIncidentsCount = affectedIncidents.length;
-  
-  // Calculate highest severity
-  let highestIncidentSeverity: SeverityLevel | "SAFE" = "SAFE";
-  for (const inc of affectedIncidents) {
-    if (highestIncidentSeverity === "SAFE" || severityRank[inc.severity] > severityRank[highestIncidentSeverity]) {
-      highestIncidentSeverity = inc.severity;
-    }
-  }
-
-  // Average confidence
-  const averageConfidence =
-    affectedIncidentsCount > 0
-      ? Math.round(
-          affectedIncidents.reduce((sum, inc) => sum + inc.confidence, 0) / affectedIncidentsCount
-        )
-      : 0;
-
-  // Last updated timestamp
-  let lastUpdated = "N/A";
-  if (affectedIncidentsCount > 0) {
-    const latestTime = Math.max(...affectedIncidents.map((inc) => new Date(inc.updatedAt).getTime()));
-    lastUpdated = new Date(latestTime).toISOString();
-  }
-
-  // Estimated delays (delay padded based on flood severity exposure score)
-  const exposure = calculateFloodExposure(routeCoords, incidents);
+  const exposure = calculateFloodExposure(coords, incidents);
   const estimatedDelayMinutes = Math.round(exposure * 3.5);
 
-  // Risk Rating
-  let floodRisk: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" = "LOW";
+  let floodRisk: RouteAnalysis["floodRisk"] = "LOW";
   if (exposure > 5) floodRisk = "EXTREME";
   else if (exposure > 2) floodRisk = "HIGH";
   else if (exposure > 0) floodRisk = "MEDIUM";
 
-  // Health score normalized 0 - 100
   let routeHealth = 100;
-  if (highestIncidentSeverity === "NOT_PASSABLE") {
-    routeHealth = 0; // Blocked route has zero health
-  } else {
-    routeHealth = Math.max(0, Math.round(100 - exposure * 14));
+  const hasBlocked = affected.some((i) => i.severity === "NOT_PASSABLE");
+  if (hasBlocked) routeHealth = 0;
+  else routeHealth = Math.max(0, Math.round(100 - exposure * 14));
+
+  let highestIncidentSeverity: SeverityLevel | "SAFE" = "SAFE";
+  for (const inc of affected) {
+    if (highestIncidentSeverity === "SAFE" || severityRank[inc.severity] > severityRank[highestIncidentSeverity as SeverityLevel]) {
+      highestIncidentSeverity = inc.severity;
+    }
   }
 
-  // Compile risk explanations
+  const averageConfidence =
+    affected.length > 0
+      ? Math.round(affected.reduce((s, i) => s + i.confidence, 0) / affected.length)
+      : 0;
+
+  const latestTime =
+    affected.length > 0
+      ? Math.max(...affected.map((i) => new Date(i.updatedAt).getTime()))
+      : 0;
+  const lastUpdated = latestTime > 0 ? new Date(latestTime).toISOString() : "N/A";
+
   const riskExplanations: string[] = [];
-  if (affectedIncidentsCount === 0) {
+  if (affected.length === 0) {
     riskExplanations.push("Route appears clear based on local flood reports.");
   } else {
-    riskExplanations.push(`Route passes through ${affectedIncidentsCount} active flood incident${affectedIncidentsCount > 1 ? "s" : ""}.`);
-    
-    // Sort affected incidents by severity to describe key hazards first
-    const sortedAffected = [...affectedIncidents].sort(
-      (a, b) => severityRank[b.severity] - severityRank[a.severity]
+    riskExplanations.push(
+      `Route passes through ${affected.length} active flood incident${affected.length > 1 ? "s" : ""}.`
     );
-
-    // List top 2 warnings
-    sortedAffected.slice(0, 2).forEach((inc) => {
-      const severityLabel = inc.severity.replace("_", " ").toLowerCase();
-      riskExplanations.push(`${inc.type} (${severityLabel}) near ${inc.landmark}.`);
+    const sorted = [...affected].sort((a, b) => severityRank[b.severity] - severityRank[a.severity]);
+    sorted.slice(0, 2).forEach((inc) => {
+      riskExplanations.push(
+        `${inc.type} (${inc.severity.replace(/_/g, " ").toLowerCase()}) near ${inc.landmark}.`
+      );
     });
-
     if (lastUpdated !== "N/A") {
       riskExplanations.push(`Condition confirmed ${formatRelativeTime(lastUpdated)}.`);
     }
@@ -204,211 +356,120 @@ export function analyzeRoute(
   return {
     floodRisk,
     routeHealth,
-    affectedIncidentsCount,
+    affectedIncidentsCount: affected.length,
     highestIncidentSeverity,
     averageConfidence,
     lastUpdated,
     estimatedDelayMinutes,
-    affectedIncidents,
+    affectedIncidents: affected,
     riskExplanations
   };
 }
 
-// Fetch turn-by-turn road route from OSRM public API with cache layer
-export async function calculateRoadRoutes(
-  origin: Coordinates,
-  destination: Coordinates,
-  incidents: Incident[]
-): Promise<RouteOption[]> {
-  const cacheKey = `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}-${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}`;
-  let osrmData = osrmGeometryCache.get(cacheKey);
-
-  const fetchFailed = false;
-
-  if (!osrmData) {
-    try {
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`;
-      const response = await fetch(osrmUrl);
-      if (response.ok) {
-        osrmData = await response.json();
-        osrmGeometryCache.set(cacheKey, osrmData);
-      }
-    } catch (err) {
-      console.warn("OSRM API fetch failed, falling back to geometric calculation:", err);
-    }
-  }
-
-  try {
-    if (!osrmData || !osrmData.routes || osrmData.routes.length === 0) {
-      return [buildFallbackDirectRoute(origin, destination, incidents)];
-    }
-
-    const routeOptions: RouteOption[] = osrmData.routes.map((route: any, index: number) => {
-      const coords: Coordinates[] = route.geometry.coordinates.map(
-        (pair: [number, number]) => ({
-          lat: pair[1],
-          lng: pair[0]
-        })
-      );
-
-      const distanceKm = Number((route.distance / 1000).toFixed(1));
-      const baseMinutes = Math.round(route.duration / 60);
-      const floodExposure = calculateFloodExposure(coords, incidents);
-      const analysis = analyzeRoute(coords, incidents, distanceKm, baseMinutes);
-      const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
-
-      const isFirst = index === 0;
-
-      let name = isFirst
-        ? analysis.floodRisk === "LOW"
-          ? "Direct Safe Route"
-          : "Primary Driving Route"
-        : `Alternate Route ${index}`;
-
-      let summary = analysis.floodRisk === "LOW"
-        ? "Clear roads based on reported flood markers"
-        : `Passes near flood points (${analysis.affectedIncidentsCount} cautions)`;
-
-      return {
-        id: `osrm-route-${index}`,
-        name,
-        summary,
-        coordinates: coords,
-        distanceKm,
-        estimatedMinutes,
-        floodExposure: Number(floodExposure.toFixed(1)),
-        confidence: Math.max(40, Math.min(98, Math.round(98 - floodExposure * 8))),
-        warnings: analysis.riskExplanations,
-        analysis
-      };
-    });
-
-    // Check if primary route is flooded. If so, generate an inland bypass if possible.
-    const primaryRoute = routeOptions[0];
-    if (primaryRoute && primaryRoute.analysis && primaryRoute.analysis.floodRisk !== "LOW") {
-      const bypassRoute = buildInlandBypassRoute(origin, destination, incidents);
-      routeOptions.push(bypassRoute);
-    }
-
-    // Rank routes: 1. Lowest flood risk, 2. Highest Health, 3. Shortest travel time, 4. Distance
-    const riskWeight = { LOW: 0, MEDIUM: 1, HIGH: 2, EXTREME: 3 };
-    return routeOptions.sort((a, b) => {
-      const aRisk = a.analysis?.floodRisk || "LOW";
-      const bRisk = b.analysis?.floodRisk || "LOW";
-      const riskDiff = riskWeight[aRisk] - riskWeight[bRisk];
-      if (riskDiff !== 0) return riskDiff;
-
-      const aHealth = a.analysis?.routeHealth ?? 100;
-      const bHealth = b.analysis?.routeHealth ?? 100;
-      const healthDiff = bHealth - aHealth;
-      if (healthDiff !== 0) return healthDiff;
-
-      const timeDiff = a.estimatedMinutes - b.estimatedMinutes;
-      if (timeDiff !== 0) return timeDiff;
-
-      return a.distanceKm - b.distanceKm;
-    });
-  } catch (err) {
-    console.warn("Routing processing error, using straight direct fallback:", err);
-    return [buildFallbackDirectRoute(origin, destination, incidents)];
-  }
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function riskWeight(risk: string): number {
+  return { LOW: 0, MEDIUM: 1, HIGH: 2, EXTREME: 3 }[risk] ?? 0;
 }
 
-function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
-  let nearest = Number.POSITIVE_INFINITY;
-  const sampleStep = Math.max(1, Math.floor(route.length / 80));
-
-  for (let index = sampleStep; index < route.length; index += sampleStep) {
-    nearest = Math.min(
-      nearest,
-      distancePointToSegmentKm(point, route[index - sampleStep], route[index])
-    );
+function labelRouteName(risk: string, isDetour: boolean): string {
+  if (isDetour) {
+    if (risk === "LOW") return "Flood-Safe Detour";
+    if (risk === "MEDIUM") return "Partial Detour";
+    return "Best Available Detour";
   }
-
-  return nearest;
+  if (risk === "LOW") return "Direct Safe Route";
+  if (risk === "MEDIUM") return "Primary Route (Caution)";
+  if (risk === "HIGH") return "Primary Route (High Risk)";
+  return "Primary Route (Blocked)";
 }
 
-function distancePointToSegmentKm(point: Coordinates, start: Coordinates, end: Coordinates): number {
-  const originLat = toRadians((start.lat + end.lat + point.lat) / 3);
-  const toXY = (c: Coordinates) => ({
-    x: c.lng * 111.32 * Math.cos(originLat),
-    y: c.lat * 110.57
-  });
-
-  const p = toXY(point);
-  const a = toXY(start);
-  const b = toXY(end);
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const segmentLengthSquared = dx * dx + dy * dy;
-
-  if (segmentLengthSquared === 0) {
-    return Math.hypot(p.x - a.x, p.y - a.y);
-  }
-
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / segmentLengthSquared));
-  const projection = {
-    x: a.x + t * dx,
-    y: a.y + t * dy
-  };
-
-  return Math.hypot(p.x - projection.x, p.y - projection.y);
+function buildSummary(analysis: RouteAnalysis): string {
+  if (analysis.floodRisk === "LOW") return "Clear roads based on reported flood markers.";
+  if (analysis.affectedIncidentsCount === 0) return "No active incidents on this path.";
+  return `Passes near ${analysis.affectedIncidentsCount} active flood incident${analysis.affectedIncidentsCount > 1 ? "s" : ""}.`;
 }
 
-function buildFallbackDirectRoute(
+/**
+ * Last-resort placeholder shown only when OSRM is completely unreachable.
+ * Clearly labelled as an estimate, not a real road route.
+ */
+function buildOfflineNotice(
   origin: Coordinates,
   destination: Coordinates,
   incidents: Incident[]
 ): RouteOption {
   const distanceKm = Number(haversineDistanceKm(origin, destination).toFixed(1));
-  const coordinates = [origin, destination];
-  const baseMinutes = Math.round(distanceKm * 2.2);
-  const analysis = analyzeRoute(coordinates, incidents, distanceKm, baseMinutes);
-  const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
-
+  const coords = [origin, destination];
+  const baseMin = Math.round(distanceKm * 2.5);
+  const analysis = analyzeRoute(coords, incidents, distanceKm, baseMin);
   return {
-    id: "fallback-direct",
-    name: "Direct Route",
-    summary: "Geodesic straight line distance",
-    coordinates,
+    id: "offline-estimate",
+    name: "⚠ Offline Estimate (No Road Data)",
+    summary: "Routing service unreachable. Straight-line distance only — not a real road path.",
+    coordinates: coords,
     distanceKm,
-    estimatedMinutes,
-    floodExposure: Number(calculateFloodExposure(coordinates, incidents).toFixed(1)),
-    confidence: 80,
-    warnings: analysis.riskExplanations,
+    estimatedMinutes: baseMin + analysis.estimatedDelayMinutes,
+    floodExposure: Number(calculateFloodExposure(coords, incidents).toFixed(1)),
+    confidence: 20,
+    warnings: [
+      "Road routing is unavailable. Connect to the internet for real routes.",
+      ...analysis.riskExplanations
+    ],
     analysis
   };
 }
 
-function buildInlandBypassRoute(
-  origin: Coordinates,
-  destination: Coordinates,
-  incidents: Incident[]
-): RouteOption {
-  // Generate an inland offset waypoint to circumvent coastal / river flood zones
-  const midLat = (origin.lat + destination.lat) / 2;
-  const midLng = (origin.lng + destination.lng) / 2 + 0.08; // Shift east/inland
-  const coordinates = [origin, { lat: midLat, lng: midLng }, destination];
-
-  const distanceKm = Number((haversineDistanceKm(origin, coordinates[1]) + haversineDistanceKm(coordinates[1], destination)).toFixed(1));
-  const baseMinutes = Math.round(distanceKm * 2.5);
-  const analysis = analyzeRoute(coordinates, incidents, distanceKm, baseMinutes);
-  const estimatedMinutes = baseMinutes + analysis.estimatedDelayMinutes;
-
-  return {
-    id: "inland-bypass",
-    name: "Inland Safe Bypass",
-    summary: "Bypasses low-lying river corridors",
-    coordinates,
-    distanceKm,
-    estimatedMinutes,
-    floodExposure: Number(calculateFloodExposure(coordinates, incidents).toFixed(1)),
-    confidence: 90,
-    warnings: analysis.riskExplanations,
-    analysis
-  };
+function isVolunteerVerified(incident: Incident): boolean {
+  return !!(
+    incident.reports?.some((r) =>
+      r.reporter.toLowerCase().includes("volunteer") ||
+      r.reporter.toLowerCase().includes("admin")
+    ) ||
+    incident.verifications?.some((v) =>
+      v.reporter.toLowerCase().includes("volunteer") ||
+      v.reporter.toLowerCase().includes("admin")
+    )
+  );
 }
 
-function toRadians(degrees: number): number {
-  return (degrees * Math.PI) / 180;
+function getIncidentAgeFactor(updatedAt: string): number {
+  const hours = Math.max(0, (Date.now() - new Date(updatedAt).getTime()) / 3_600_000);
+  if (hours > 24) return 0.25;
+  if (hours > 12) return 0.5;
+  if (hours > 4)  return 0.75;
+  return 1.0;
+}
+
+function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
+  let nearest = Number.POSITIVE_INFINITY;
+  const step = Math.max(1, Math.floor(route.length / 80));
+  for (let i = step; i < route.length; i += step) {
+    nearest = Math.min(nearest, distancePointToSegmentKm(point, route[i - step], route[i]));
+  }
+  return nearest;
+}
+
+function distancePointToSegmentKm(
+  point: Coordinates,
+  start: Coordinates,
+  end: Coordinates
+): number {
+  const refLat = toRadians((start.lat + end.lat + point.lat) / 3);
+  const toXY = (c: Coordinates) => ({
+    x: c.lng * 111.32 * Math.cos(refLat),
+    y: c.lat * 110.57
+  });
+  const p = toXY(point);
+  const a = toXY(start);
+  const b = toXY(end);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function toRadians(deg: number): number {
+  return (deg * Math.PI) / 180;
 }
