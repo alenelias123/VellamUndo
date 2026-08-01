@@ -4,34 +4,29 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import {
   Ambulance,
-  Building2,
   CircleDot,
-  LifeBuoy,
   MapPinned,
   Navigation2,
-  RadioTower,
   ShieldCheck,
   AlertTriangle
 } from "lucide-react";
-import { ReliefCentersPanel } from "@/components/ReliefCentersPanel";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
-import { HelpRequestPanel } from "@/components/HelpRequestPanel";
-import { VolunteerDashboard } from "@/components/VolunteerDashboard";
 import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
-import { defaultDistrictSlug, districts, getDistrictBySlug } from "@/lib/districts";
 import { severityRank, severityMeta, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
 import type { Coordinates, RouteOption } from "@/lib/types";
 
-const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
-
 const FloodMap = dynamic(() => import("@/components/FloodMap").then((mod) => mod.FloodMap), {
   ssr: false,
-  loading: () => <div className="map-loading bg-gray-50 flex items-center justify-center h-full text-xs font-semibold text-gray-500">Loading Leaflet Map...</div>
+  loading: () => (
+    <div className="map-loading bg-gray-50 flex items-center justify-center h-full text-xs font-semibold text-gray-500">
+      Loading Leaflet Map...
+    </div>
+  )
 });
 
-type ActivePanel = "report" | "route" | "help" | "volunteers" | "centers";
+type ActivePanel = "report" | "route";
 
 const panelItems: Array<{
   id: ActivePanel;
@@ -39,36 +34,27 @@ const panelItems: Array<{
   icon: React.ComponentType<{ size?: number }>;
 }> = [
   { id: "report", label: "Report", icon: MapPinned },
-  { id: "route", label: "Route", icon: Navigation2 },
-  { id: "help", label: "Help", icon: LifeBuoy },
-  { id: "volunteers", label: "Volunteers", icon: RadioTower },
-  { id: "centers", label: "Centers", icon: Building2 }
+  { id: "route", label: "Route", icon: Navigation2 }
 ];
+
+const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
 
 export default function HomeClient() {
   const {
     incidents,
-    helpRequests,
-    reliefCenters,
     offlineQueue,
     isSyncing,
-    analytics,
     addReport,
     verifyIncident,
-    addHelpRequest,
-    updateHelpStatus,
     resetDemoData
   } = useEmergencyStore();
 
-  const [activeDistrictSlug, setActiveDistrictSlug] = useState(defaultDistrictSlug);
   const [activePanel, setActivePanel] = useState<ActivePanel>("report");
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
-
-  const activeDistrict = getDistrictBySlug(activeDistrictSlug);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -96,20 +82,18 @@ export default function HomeClient() {
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
-  
+
   const selectedIncident = useMemo(() => {
     return incidents.find((inc) => inc.id === selectedIncidentId);
   }, [incidents, selectedIncidentId]);
 
-  // Center map on selected incident, pending coordinate, or default district center
   const mapCenter = useMemo(() => {
     if (selectedIncident) return selectedIncident.coordinates;
     if (pendingLocation) return pendingLocation;
     if (userLocation) return userLocation;
-    return activeDistrict.center;
-  }, [selectedIncident, pendingLocation, userLocation, activeDistrict]);
+    return DEFAULT_KOCHI_COORDS;
+  }, [selectedIncident, pendingLocation, userLocation]);
 
-  // Calculate watchlist (highest severity active incidents)
   const severeIncidents = useMemo(() => {
     return [...incidents]
       .filter((inc) => inc.status === "active" || inc.status === "receding")
@@ -117,7 +101,6 @@ export default function HomeClient() {
       .slice(0, 4);
   }, [incidents]);
 
-  // Calculate latest update rollup
   const latestUpdatesRollup = useMemo(() => {
     return [...incidents]
       .filter((inc) => inc.status !== "archived")
@@ -127,7 +110,7 @@ export default function HomeClient() {
 
   function handlePickLocation(coordinates: Coordinates) {
     setPendingLocation(coordinates);
-    setSelectedIncidentId(undefined); // close drawer to prioritize reporting
+    setSelectedIncidentId(undefined);
     setActivePanel("report");
   }
 
@@ -166,23 +149,6 @@ export default function HomeClient() {
             </div>
           ) : null}
 
-          <label className="district-select">
-            District
-            <select
-              value={activeDistrictSlug}
-              onChange={(event) => {
-                setActiveDistrictSlug(event.target.value);
-                setSelectedIncidentId(undefined);
-                setPendingLocation(undefined);
-              }}
-            >
-              {districts.map((district) => (
-                <option key={district.slug} value={district.slug}>
-                  {district.name}
-                </option>
-              ))}
-            </select>
-          </label>
           <div className="signal-pill">
             <CircleDot size={14} className="text-green-500 fill-green-500 animate-pulse" />
             Live Network Status
@@ -200,7 +166,7 @@ export default function HomeClient() {
                 key={item.id}
                 className={activePanel === item.id && !selectedIncidentId ? "is-active" : ""}
                 onClick={() => {
-                  setSelectedIncidentId(undefined); // close drawer to switch modes
+                  setSelectedIncidentId(undefined);
                   setActivePanel(item.id);
                 }}
                 title={item.label}
@@ -218,24 +184,22 @@ export default function HomeClient() {
               center={mapCenter}
               userLocation={userLocation || undefined}
               incidents={incidents}
-              helpRequests={helpRequests}
-              reliefCenters={reliefCenters}
               selectedIncidentId={selectedIncidentId}
               activeRoute={activeRoute}
               pendingLocation={pendingLocation}
               onSelectIncident={(id) => {
                 setSelectedIncidentId(id);
-                setPendingLocation(undefined); // clear active reporting pins
+                setPendingLocation(undefined);
               }}
               onPickLocation={handlePickLocation}
             />
           </div>
 
           <div className="map-summary">
-            <Metric label="Incidents Logged" value={incidents.filter(i => i.status !== "archived").length} />
-            <Metric label="Blocked Roads" value={analytics.blockedRoads} tone="danger" />
-            <Metric label="SOS Help Requests" value={analytics.openHelpRequests} tone="warning" />
-            <Metric label="Relief Camp Beds" value={analytics.reliefBedsAvailable} tone="safe" />
+            <Metric
+              label="Incidents Logged"
+              value={incidents.filter((i) => i.status !== "archived").length}
+            />
           </div>
 
           <aside className="map-intel" aria-label="Flood intelligence">
@@ -263,10 +227,7 @@ export default function HomeClient() {
                         setPendingLocation(undefined);
                       }}
                     >
-                      <span
-                        className="severity-dot shrink-0"
-                        style={{ background: color }}
-                      />
+                      <span className="severity-dot shrink-0" style={{ background: color }} />
                       <span className="truncate">
                         <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
                         <small className="text-[10px] text-gray-500 font-semibold flex items-center gap-0.5">
@@ -302,14 +263,15 @@ export default function HomeClient() {
                         setPendingLocation(undefined);
                       }}
                     >
-                      <span
-                        className="severity-dot shrink-0"
-                        style={{ background: color }}
-                      />
+                      <span className="severity-dot shrink-0" style={{ background: color }} />
                       <span className="truncate">
                         <strong className="text-xs text-gray-800 truncate block">{incident.roadName}</strong>
                         <small className="text-[10px] text-gray-400 font-mono">
-                          Updated {new Date(incident.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          Updated{" "}
+                          {new Date(incident.updatedAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
                         </small>
                       </span>
                     </button>
@@ -347,34 +309,11 @@ export default function HomeClient() {
                   onRouteChange={handleRouteChange}
                 />
               ) : null}
-
-              {activePanel === "help" ? (
-                <HelpRequestPanel
-                  activeDistrictSlug={activeDistrictSlug}
-                  pendingLocation={pendingLocation}
-                  requests={helpRequests}
-                  onSubmit={(input) => {
-                    const request = addHelpRequest(input);
-                    setPendingLocation(undefined);
-                    return request;
-                  }}
-                />
-              ) : null}
-
-              {activePanel === "volunteers" ? (
-                <VolunteerDashboard requests={helpRequests} onUpdateStatus={updateHelpStatus} />
-              ) : null}
-
-              {activePanel === "centers" ? (
-                <ReliefCentersPanel
-                  centers={reliefCenters}
-                  activeDistrictSlug={activeDistrictSlug}
-                />
-              ) : null}
             </>
           )}
         </aside>
       </main>
+
       <div className="px-5 pb-3 text-xs font-semibold text-gray-600">
         {userLocation
           ? `GPS live: ${userLocation.lat}, ${userLocation.lng}`
