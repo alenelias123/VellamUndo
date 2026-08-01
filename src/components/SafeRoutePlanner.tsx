@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   Clock3,
   Copy,
@@ -279,6 +280,157 @@ export function SafeRoutePlanner({
   const areAllRoutesBlocked =
     routes.length > 0 && routes.every((r) => (r.analysis?.routeHealth ?? 100) < 50);
 
+  // ── Route card renderer ───────────────────────────────────────────
+  function renderRouteCard(option: RouteOption, availableIndex: number, isBlockedSection: boolean) {
+    const isSelected = activeRoute?.id === option.id;
+    const analysis = option.analysis;
+    const risk = analysis?.floodRisk ?? "LOW";
+    const healthVal = analysis?.routeHealth ?? 100;
+    const healthMeta = getHealthMeta(healthVal);
+    const riskStyle = getRiskStyle(risk);
+    const isBlocked = isBlockedSection || healthVal === 0 || risk === "EXTREME";
+
+    return (
+      <article
+        key={option.id}
+        className={[
+          "route-card2",
+          isSelected ? "route-card2--active" : "",
+          isBlocked ? "route-card2--blocked" : ""
+        ].join(" ")}
+      >
+        {/* Card header */}
+        <div className="route-card2-header">
+          <button
+            type="button"
+            className="route-card2-title-btn"
+            onClick={() => !isBlocked && onRouteChange(option)}
+          >
+            <strong className="route-card2-name">{option.name}</strong>
+            {availableIndex === 0 && !isBlocked ? (
+              <span className="route-recommended-badge">
+                <ShieldCheck size={10} /> Recommended
+              </span>
+            ) : null}
+            {isBlocked ? (
+              <span className="route-blocked-badge">
+                <Ban size={10} /> Impassable
+              </span>
+            ) : null}
+          </button>
+          <span
+            className="route-risk-badge"
+            style={{ background: riskStyle.bg, color: riskStyle.text }}
+          >
+            {risk}
+          </span>
+        </div>
+
+        {option.summary ? <p className="route-card2-summary">{option.summary}</p> : null}
+
+        {/* Stats row */}
+        <div className="route-card2-stats">
+          <span className="route-stat">
+            <Route size={12} />
+            {option.distanceKm} km
+          </span>
+          <span className="route-stat">
+            <Clock3 size={12} />
+            {option.estimatedMinutes} min
+            {analysis && analysis.estimatedDelayMinutes > 0 ? (
+              <span className="route-stat-delay">+{analysis.estimatedDelayMinutes}m delay</span>
+            ) : null}
+          </span>
+          {analysis ? (
+            <span className="route-stat">
+              <Layers size={12} />
+              <span style={{ color: healthMeta.color, fontWeight: 800 }}>
+                {analysis.routeHealth}% health
+              </span>
+            </span>
+          ) : null}
+        </div>
+
+        {/* Risk explanations */}
+        {analysis && analysis.riskExplanations.length > 0 ? (
+          <ul className="route-risk-explanations">
+            {analysis.riskExplanations.map((exp, i) => (
+              <li key={i}>{exp}</li>
+            ))}
+          </ul>
+        ) : null}
+
+        {/* Affected incidents */}
+        {analysis && analysis.affectedIncidentsCount > 0 ? (
+          <div className="route-affected-incidents">
+            <span className="route-affected-label">Hazards on this route:</span>
+            <div className="route-affected-chips">
+              {analysis.affectedIncidents.map((inc) => (
+                <button
+                  key={inc.id}
+                  type="button"
+                  className="route-incident-chip"
+                  onClick={() => onSelectIncident?.(inc.id)}
+                >
+                  📍 {inc.roadName}
+                  <span className="route-incident-severity">
+                    {inc.severity.replace(/_/g, " ").toLowerCase()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Actions — hidden for blocked routes */}
+        {!isBlocked ? (
+          <div className="route-card2-actions">
+            <button
+              type="button"
+              className={`route-view-btn ${isSelected ? "route-view-btn--active" : ""}`}
+              onClick={() => onRouteChange(option)}
+            >
+              {isSelected ? <><CheckCircle2 size={13} /> Viewing</> : "View on Map"}
+            </button>
+
+            <div className="route-nav-menu-wrap">
+              <button
+                type="button"
+                className="route-nav-trigger"
+                onClick={() => setOpenNavMenuId(openNavMenuId === option.id ? null : option.id)}
+                title="Open in navigation app"
+              >
+                <ExternalLink size={13} />
+              </button>
+              {openNavMenuId === option.id ? (
+                <div className="route-nav-dropdown">
+                  <button type="button" onClick={() => { openNavigation(option, "google"); setOpenNavMenuId(null); }}>
+                    Google Maps
+                  </button>
+                  <button type="button" onClick={() => { openNavigation(option, "organic"); setOpenNavMenuId(null); }}>
+                    Organic Maps
+                  </button>
+                  <button type="button" onClick={() => { handleCopyCoordinates(option); setOpenNavMenuId(null); }}>
+                    <span>Copy Coords</span><Copy size={10} />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="route-blocked-footer">
+            <Ban size={12} />
+            <span>Road is impassable — use an alternate route above</span>
+          </div>
+        )}
+
+        {copiedId === option.id ? (
+          <div className="route-copied-toast">Copied!</div>
+        ) : null}
+      </article>
+    );
+  }
+
   // ── Render ────────────────────────────────────────────────────────
   return (
     <section className="route-planner-panel" aria-label="Safe Route Navigation">
@@ -483,186 +635,106 @@ export function SafeRoutePlanner({
             <Navigation2 size={28} strokeWidth={1.5} />
             <p>Search a destination above to compute flood-safe driving routes.</p>
           </div>
-        ) : (
-          <div className="route-cards-list">
-            {routes.map((option, index) => {
-              const isSelected = activeRoute?.id === option.id;
-              const analysis = option.analysis;
-              const risk = analysis?.floodRisk ?? "LOW";
-              const healthVal = analysis?.routeHealth ?? 100;
-              const healthMeta = getHealthMeta(healthVal);
-              const riskStyle = getRiskStyle(risk);
+        ) : (() => {
+          const available = routes.filter(
+            (r) => (r.analysis?.routeHealth ?? 100) > 0 && r.analysis?.floodRisk !== "EXTREME"
+          );
+          const blocked = routes.filter(
+            (r) => (r.analysis?.routeHealth ?? 100) === 0 || r.analysis?.floodRisk === "EXTREME"
+          );
 
-              return (
-                <article key={option.id} className={`route-card2 ${isSelected ? "route-card2--active" : ""}`}>
+          return (
+            <div className="route-cards-list">
 
-                  {/* Card header */}
-                  <div className="route-card2-header">
-                    <button type="button" className="route-card2-title-btn" onClick={() => onRouteChange(option)}>
-                      <strong className="route-card2-name">{option.name}</strong>
-                      {index === 0 ? (
-                        <span className="route-recommended-badge">
-                          <ShieldCheck size={10} />
-                          Recommended
-                        </span>
-                      ) : null}
-                    </button>
-                    <span
-                      className="route-risk-badge"
-                      style={{ background: riskStyle.bg, color: riskStyle.text }}
-                    >
-                      {risk}
-                    </span>
+              {/* ── Available routes ──────────────────────── */}
+              {available.length > 0 ? (
+                <>
+                  <div className="route-section-label route-section-label--available">
+                    <CheckCircle2 size={13} />
+                    {available.length} Available Route{available.length > 1 ? "s" : ""}
                   </div>
+                  {available.map((option, index) => renderRouteCard(option, index, false))}
+                </>
+              ) : (
+                <div className="route-all-blocked-banner">
+                  <AlertTriangle size={16} />
+                  <span>No passable routes found. All corridors are flooded or blocked.</span>
+                </div>
+              )}
 
-                  {option.summary ? (
-                    <p className="route-card2-summary">{option.summary}</p>
-                  ) : null}
-
-                  {/* Stats row */}
-                  <div className="route-card2-stats">
-                    <span className="route-stat">
-                      <Route size={12} />
-                      {option.distanceKm} km
-                    </span>
-                    <span className="route-stat">
-                      <Clock3 size={12} />
-                      {option.estimatedMinutes} min
-                      {analysis && analysis.estimatedDelayMinutes > 0 ? (
-                        <span className="route-stat-delay">+{analysis.estimatedDelayMinutes}m</span>
-                      ) : null}
-                    </span>
-                    {analysis ? (
-                      <span className="route-stat">
-                        <Layers size={12} />
-                        <span style={{ color: healthMeta.color, fontWeight: 800 }}>
-                          {analysis.routeHealth}%
-                        </span>
-                      </span>
-                    ) : null}
+              {/* ── Blocked routes ────────────────────────── */}
+              {blocked.length > 0 ? (
+                <>
+                  <div className="route-section-label route-section-label--blocked">
+                    <Ban size={13} />
+                    {blocked.length} Blocked / Impassable Route{blocked.length > 1 ? "s" : ""}
                   </div>
+                  {blocked.map((option) => renderRouteCard(option, -1, true))}
+                </>
+              ) : null}
 
-                  {/* Risk explanations */}
-                  {analysis && analysis.riskExplanations.length > 0 ? (
-                    <ul className="route-risk-explanations">
-                      {analysis.riskExplanations.map((exp, i) => (
-                        <li key={i}>{exp}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-
-                  {/* Affected incidents */}
-                  {analysis && analysis.affectedIncidentsCount > 0 ? (
-                    <div className="route-affected-incidents">
-                      <span className="route-affected-label">Hazards on this route:</span>
-                      <div className="route-affected-chips">
-                        {analysis.affectedIncidents.map((inc) => (
-                          <button
-                            key={inc.id}
-                            type="button"
-                            className="route-incident-chip"
-                            onClick={() => onSelectIncident?.(inc.id)}
+              {/* ── Comparative table ─────────────────────── */}
+              {routes.length > 1 ? (
+                <div className="route-compare-table">
+                  <p className="route-compare-title">
+                    <Info size={12} />
+                    Summary comparison
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Route</th>
+                        <th>Dist</th>
+                        <th>Time</th>
+                        <th>Health</th>
+                        <th>Risk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {routes.map((r) => {
+                        const rs = getRiskStyle(r.analysis?.floodRisk ?? "LOW");
+                        const isRouteBlocked =
+                          (r.analysis?.routeHealth ?? 100) === 0 ||
+                          r.analysis?.floodRisk === "EXTREME";
+                        return (
+                          <tr
+                            key={r.id}
+                            className={[
+                              activeRoute?.id === r.id ? "is-selected-row" : "",
+                              isRouteBlocked ? "is-blocked-row" : ""
+                            ].join(" ")}
                           >
-                            📍 {inc.roadName}
-                            <span className="route-incident-severity">
-                              {inc.severity.replace(/_/g, " ").toLowerCase()}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Actions */}
-                  <div className="route-card2-actions">
-                    <button
-                      type="button"
-                      className={`route-view-btn ${isSelected ? "route-view-btn--active" : ""}`}
-                      onClick={() => onRouteChange(option)}
-                    >
-                      {isSelected ? (
-                        <><CheckCircle2 size={13} /> Viewing</>
-                      ) : (
-                        "View on Map"
-                      )}
-                    </button>
-
-                    <div className="route-nav-menu-wrap">
-                      <button
-                        type="button"
-                        className="route-nav-trigger"
-                        onClick={() => setOpenNavMenuId(openNavMenuId === option.id ? null : option.id)}
-                        title="Open in navigation app"
-                      >
-                        <ExternalLink size={13} />
-                      </button>
-
-                      {openNavMenuId === option.id ? (
-                        <div className="route-nav-dropdown">
-                          <button type="button" onClick={() => { openNavigation(option, "google"); setOpenNavMenuId(null); }}>
-                            Google Maps
-                          </button>
-                          <button type="button" onClick={() => { openNavigation(option, "organic"); setOpenNavMenuId(null); }}>
-                            Organic Maps
-                          </button>
-                          <button type="button" onClick={() => { handleCopyCoordinates(option); setOpenNavMenuId(null); }}>
-                            <span>Copy Coords</span>
-                            <Copy size={10} />
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {copiedId === option.id ? (
-                    <div className="route-copied-toast">Copied!</div>
-                  ) : null}
-                </article>
-              );
-            })}
-
-            {/* Comparative table */}
-            {routes.length > 1 ? (
-              <div className="route-compare-table">
-                <p className="route-compare-title">
-                  <Info size={12} />
-                  Summary comparison
-                </p>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Route</th>
-                      <th>Dist</th>
-                      <th>Time</th>
-                      <th>Health</th>
-                      <th>Risk</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {routes.map((r) => {
-                      const rs = getRiskStyle(r.analysis?.floodRisk ?? "LOW");
-                      return (
-                        <tr key={r.id} className={activeRoute?.id === r.id ? "is-selected-row" : ""}>
-                          <td className="route-compare-name">{r.name}</td>
-                          <td>{r.distanceKm} km</td>
-                          <td>{r.estimatedMinutes} m</td>
-                          <td style={{ color: getHealthMeta(r.analysis?.routeHealth ?? 100).color, fontWeight: 800 }}>
-                            {r.analysis?.routeHealth ?? 100}%
-                          </td>
-                          <td>
-                            <span className="route-compare-risk" style={{ background: rs.bg, color: rs.text }}>
-                              {r.analysis?.floodRisk ?? "LOW"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </div>
-        )}
+                            <td className="route-compare-name">
+                              {isRouteBlocked ? "🚫 " : ""}{r.name}
+                            </td>
+                            <td>{r.distanceKm} km</td>
+                            <td>{r.estimatedMinutes} m</td>
+                            <td
+                              style={{
+                                color: getHealthMeta(r.analysis?.routeHealth ?? 100).color,
+                                fontWeight: 800
+                              }}
+                            >
+                              {r.analysis?.routeHealth ?? 100}%
+                            </td>
+                            <td>
+                              <span
+                                className="route-compare-risk"
+                                style={{ background: rs.bg, color: rs.text }}
+                              >
+                                {r.analysis?.floodRisk ?? "LOW"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
       </div>
     </section>
   );
