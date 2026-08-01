@@ -13,25 +13,13 @@ import {
   useMap,
   useMapEvents
 } from "react-leaflet";
-import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
-import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
-import { severityRank, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
-import type {
-  Coordinates,
-  Incident,
-  IncidentType,
-  HelpRequest,
-  ReliefCenter,
-  RouteOption,
-  SeverityLevel
-} from "@/lib/types";
+import { severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
+import type { Coordinates, Incident, RouteOption } from "@/lib/types";
 
 type FloodMapProps = {
   center: Coordinates;
   userLocation?: Coordinates;
   incidents: Incident[];
-  helpRequests: HelpRequest[];
-  reliefCenters: ReliefCenter[];
   selectedIncidentId?: string;
   activeRoute?: RouteOption;
   pendingLocation?: Coordinates;
@@ -43,8 +31,6 @@ export function FloodMap({
   center,
   userLocation,
   incidents,
-  helpRequests,
-  reliefCenters,
   selectedIncidentId,
   activeRoute,
   pendingLocation,
@@ -97,7 +83,6 @@ export function FloodMap({
         </Polyline>
       ) : null}
 
-      {/* Render incident markers */}
       {incidents
         .filter((inc) => inc.status !== "archived")
         .map((incident) => {
@@ -136,48 +121,6 @@ export function FloodMap({
             </Marker>
           );
         })}
-
-      {/* Render relief centers */}
-      {reliefCenters.map((centerItem) => {
-        const meta = reliefCenterTypeMeta[centerItem.type];
-
-        return (
-          <Marker
-            key={centerItem.id}
-            position={toLatLng(centerItem.coordinates)}
-            icon={makeTextIcon("center", meta.label.slice(0, 1), meta.color)}
-          >
-            <Popup>
-              <div className="map-popup">
-                <strong>{centerItem.name}</strong>
-                <span>{meta.label}</span>
-                <span>{Math.max(0, centerItem.capacity - centerItem.occupancy)} spaces available</span>
-                <span>{centerItem.contact}</span>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
-
-      {/* Render help requests */}
-      {helpRequests
-        .filter((request) => request.status !== "completed")
-        .map((request) => (
-          <Marker
-            key={request.id}
-            position={toLatLng(request.coordinates)}
-            icon={makeTextIcon("help", helpTypeMeta[request.type].label.slice(0, 1), priorityMeta[request.priority].color)}
-          >
-            <Popup>
-              <div className="map-popup">
-                <strong>{helpTypeMeta[request.type].label} request</strong>
-                <span>{request.locationName}</span>
-                <span>{priorityMeta[request.priority].label} priority</span>
-                <span>{request.peopleCount} people</span>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
 
       {pendingLocation ? (
         <Marker
@@ -222,7 +165,7 @@ function toLatLng(coordinates: Coordinates): [number, number] {
   return [coordinates.lat, coordinates.lng];
 }
 
-function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: string) {
+function makeTextIcon(kind: "pending", text: string, color: string) {
   return L.divIcon({
     className: `vu-map-icon vu-map-icon--${kind}`,
     html: `<span style="background:${color}">${text}</span>`,
