@@ -11,9 +11,10 @@ import {
   Send,
   X
 } from "lucide-react";
+import { useLocationSearch } from "@/hooks/useLocationSearch";
 import { compressImage, uploadImageToSupabase } from "@/lib/imageUpload";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
-import { geocodeDestination, type SearchResultPlace } from "@/lib/routing";
+import type { SearchResultPlace } from "@/lib/routing";
 import type { Coordinates, IncidentType, SeverityLevel } from "@/lib/types";
 
 type OfflineReportPayload = {
@@ -54,10 +55,8 @@ export function ReportPanel({
   const [reporter, setReporter] = useState("");
 
   // Custom location search state
-  const [locationQuery, setLocationQuery] = useState("");
-  const [locationResults, setLocationResults] = useState<SearchResultPlace[]>([]);
-  const [isLocationSearching, setIsLocationSearching] = useState(false);
-  const [locationSearchError, setLocationSearchError] = useState("");
+  const location$ = useLocationSearch();
+  const locationQuery = location$.query;
 
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -133,37 +132,15 @@ export function ReportPanel({
     );
   }
 
-  async function handleLocationSearch() {
-    const q = locationQuery.trim();
-    if (q.length < 2) return;
-
-    setIsLocationSearching(true);
-    setLocationSearchError("");
-    try {
-      const results = await geocodeDestination(q);
-      if (results.length === 0) {
-        setLocationSearchError("No places found. Try a different name.");
-        setLocationResults([]);
-      } else {
-        setLocationResults(results);
-      }
-    } catch {
-      setLocationSearchError("Search failed. Check your connection.");
-    } finally {
-      setIsLocationSearching(false);
-    }
-  }
-
   function selectSearchedLocation(place: SearchResultPlace) {
-    setLocationResults([]);
-    setLocationQuery(place.name);
+    location$.setQuery(place.name);
+    location$.clearSuggestions();
     onPickLocation(place.coordinates);
   }
 
   function clearCustomLocation() {
-    setLocationQuery("");
-    setLocationResults([]);
-    setLocationSearchError("");
+    location$.setQuery("");
+    location$.clearSuggestions();
   }
 
   async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -322,13 +299,18 @@ export function ReportPanel({
                     placeholder="e.g. Aluva bus stand, Thrissur…"
                     value={locationQuery}
                     onChange={(e) => {
-                      setLocationQuery(e.target.value);
-                      if (!e.target.value) clearCustomLocation();
+                      location$.setQuery(e.target.value);
+                      if (!e.target.value) location$.clearSuggestions();
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      location$.handleKeyDown(e, selectSearchedLocation);
+                      if (
+                        e.key === "Enter" &&
+                        !e.defaultPrevented &&
+                        location$.suggestions.length > 0
+                      ) {
                         e.preventDefault();
-                        handleLocationSearch();
+                        selectSearchedLocation(location$.suggestions[0]);
                       }
                     }}
                   />
@@ -346,10 +328,10 @@ export function ReportPanel({
                 <button
                   type="button"
                   className="location-search-btn"
-                  onClick={() => handleLocationSearch()}
-                  disabled={isLocationSearching || locationQuery.trim().length < 2}
+                  onClick={() => location$.setQuery(locationQuery)}
+                  disabled={location$.isLoading || locationQuery.trim().length < 2}
                 >
-                  {isLocationSearching ? (
+                  {location$.isLoading ? (
                     <Loader2 size={13} className="report-spin" />
                   ) : (
                     <Search size={13} />
@@ -357,13 +339,13 @@ export function ReportPanel({
                 </button>
               </div>
 
-              {locationSearchError ? (
-                <p className="location-search-error">{locationSearchError}</p>
+              {location$.error ? (
+                <p className="location-search-error">{location$.error}</p>
               ) : null}
 
-              {locationResults.length > 0 ? (
+              {location$.suggestions.length > 0 ? (
                 <ul className="location-search-results">
-                  {locationResults.map((result) => (
+                  {location$.suggestions.map((result) => (
                     <li key={result.id}>
                       <button
                         type="button"
