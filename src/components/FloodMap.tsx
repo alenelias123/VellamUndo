@@ -679,14 +679,14 @@ function MapViewController({
   center,
   hasActiveRoute
 }: {
-  center: Coordinates;
+  center: Coordinates & { zoom?: number };
   hasActiveRoute: boolean;
 }) {
   const map = useMap();
   useEffect(() => {
     if (hasActiveRoute) return;
-    map.flyTo([center.lat, center.lng], map.getZoom(), { duration: 0.6 });
-  }, [center.lat, center.lng, hasActiveRoute, map]);
+    map.flyTo([center.lat, center.lng], center.zoom ?? map.getZoom(), { duration: 0.6 });
+  }, [center.lat, center.lng, center.zoom, hasActiveRoute, map]);
   return null;
 }
 

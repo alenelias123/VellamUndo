@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import type { Incident, IncidentReport, IncidentVerification, SeverityLevel } from "@/lib/types";
+import { createClient as createServerSupabase } from "@/utils/supabase/server";
+import { cookies } from "next/headers";
 
 // Helper for Haversine distance
 function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -89,13 +91,72 @@ export function calculateIncidentConfidence(
   return Math.max(5, Math.min(98, score));
 }
 
-// GET all incidents joined with child reports, images, and verifications
+// GET all incidents joined with child reports, images, verifications, and audit logs
 export async function GET() {
   if (!supabase) {
     return NextResponse.json({ incidents: [] });
   }
 
   try {
+    // 1. Run Auto-Archive self-healing check
+    const { data: activeIncidents } = await supabase
+      .from("incidents")
+      .select("id, status, created_at, updated_at, last_report_at, last_verified_at, needs_verification")
+      .neq("status", "archived");
+
+    const now = new Date();
+    if (activeIncidents) {
+      for (const inc of activeIncidents) {
+        const dates = [
+          new Date(inc.created_at),
+          new Date(inc.updated_at),
+          inc.last_report_at ? new Date(inc.last_report_at) : null,
+          inc.last_verified_at ? new Date(inc.last_verified_at) : null
+        ].filter(Boolean) as Date[];
+        const lastActivity = new Date(Math.max(...dates.map(d => d.getTime())));
+        const elapsedHours = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60);
+
+        if (elapsedHours >= 48) {
+          // Auto-archive
+          await supabase
+            .from("incidents")
+            .update({ status: "archived", archived_at: now.toISOString(), needs_verification: false })
+            .eq("id", inc.id);
+
+          await supabase
+            .from("audit_logs")
+            .insert([{
+              incident_id: inc.id,
+              user_id: "System (Auto-Archive)",
+              action: "Archive",
+              target_table: "incidents",
+              target_id: inc.id,
+              previous_value: { status: inc.status },
+              new_value: { status: "archived" }
+            }]);
+        } else if (elapsedHours >= 24 && !inc.needs_verification) {
+          // Mark needs verification
+          await supabase
+            .from("incidents")
+            .update({ needs_verification: true })
+            .eq("id", inc.id);
+
+          await supabase
+            .from("audit_logs")
+            .insert([{
+              incident_id: inc.id,
+              user_id: "System (Auto-Archive)",
+              action: "Update",
+              target_table: "incidents",
+              target_id: inc.id,
+              previous_value: { needs_verification: false },
+              new_value: { needs_verification: true }
+            }]);
+        }
+      }
+    }
+
+    // 2. Fetch all incidents
     const { data: dbIncidents, error: errIncidents } = await supabase
       .from("incidents")
       .select(`
@@ -104,7 +165,8 @@ export async function GET() {
           *,
           incident_images (*)
         ),
-        incident_verifications (*)
+        incident_verifications (*),
+        audit_logs (*)
       `)
       .order("created_at", { ascending: false });
 
@@ -113,15 +175,23 @@ export async function GET() {
     }
 
     const mappedIncidents: Incident[] = (dbIncidents || []).map((db: any) => {
-      const reports: IncidentReport[] = (db.incident_reports || []).map((r: any) => ({
-        id: r.id,
-        incidentId: r.incident_id,
-        severity: r.severity as SeverityLevel,
-        notes: r.notes || "",
-        reporter: r.reporter || "Anonymous",
-        createdAt: r.created_at,
-        photos: (r.incident_images || []).map((img: any) => img.image_url)
-      }));
+      // Exclude soft-deleted reports
+      const reports: IncidentReport[] = (db.incident_reports || [])
+        .filter((r: any) => !r.deleted_at)
+        .map((r: any) => ({
+          id: r.id,
+          incidentId: r.incident_id,
+          severity: r.severity as SeverityLevel,
+          notes: r.notes || "",
+          reporter: r.reporter || "Anonymous",
+          createdAt: r.created_at,
+          photos: (r.incident_images || []).map((img: any) => img.image_url),
+          ownershipToken: r.ownership_token,
+          isGuestReport: r.is_guest_report,
+          reporterId: r.reporter_id,
+          updatedAt: r.updated_at,
+          deletedAt: r.deleted_at
+        }));
 
       const verifications: IncidentVerification[] = (db.incident_verifications || []).map((v: any) => ({
         id: v.id,
@@ -131,7 +201,20 @@ export async function GET() {
         createdAt: v.created_at
       }));
 
-      // Calculate confidence dynamically to keep it up to date
+      const auditLogs = (db.audit_logs || [])
+        .map((a: any) => ({
+          id: a.id,
+          incidentId: a.incident_id,
+          userId: a.user_id,
+          action: a.action,
+          targetTable: a.target_table,
+          targetId: a.target_id,
+          previousValue: a.previous_value,
+          newValue: a.new_value,
+          createdAt: a.created_at
+        }))
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
       const confidence = calculateIncidentConfidence(reports, verifications, db.created_at);
       let floodStartLat = db.flood_start_lat;
       let floodStartLng = db.flood_start_lng;
@@ -181,7 +264,12 @@ export async function GET() {
         floodStartLat: floodStartLat || undefined,
         floodStartLng: floodStartLng || undefined,
         floodEndLat: floodEndLat || undefined,
-        floodEndLng: floodEndLng || undefined
+        floodEndLng: floodEndLng || undefined,
+        lastVerifiedAt: db.last_verified_at || undefined,
+        lastReportAt: db.last_report_at || undefined,
+        archivedAt: db.archived_at || undefined,
+        needsVerification: db.needs_verification || false,
+        auditLogs
       };
     });
 
@@ -221,6 +309,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Server-side auth check
+    const cookieStore = await cookies();
+    const supabaseServer = createServerSupabase(cookieStore);
+    const { data: { user } } = await supabaseServer.auth.getUser();
+
+    const isGuest = !user;
+    const userId = user ? user.id : null;
+    const finalReporter = user
+      ? (user.user_metadata?.full_name || user.email || reporter || "Authenticated user")
+      : (reporter || "Community reporter");
+    const ownershipToken = isGuest ? crypto.randomUUID() : null;
+
     // 1. Check for nearby active incidents within ~500m
     const latDelta = 0.0045; // ~500m lat variance
     const lngDelta = 0.0045; // ~500m lng variance
@@ -237,7 +337,6 @@ export async function POST(request: Request) {
     let targetIncident: any = null;
 
     if (nearbyIncidents && nearbyIncidents.length > 0) {
-      // Find the closest incident within 500 meters
       let minDistance = 0.5; // 500m limit
       for (const inc of nearbyIncidents) {
         const dist = haversineDistanceKm(latitude, longitude, inc.latitude, inc.longitude);
@@ -303,6 +402,18 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: errNewInc?.message || "Failed to create incident" }, { status: 500 });
       }
       incidentId = newInc.id;
+
+      // Log incident creation
+      await supabase
+        .from("audit_logs")
+        .insert([{
+          incident_id: incidentId,
+          user_id: finalReporter,
+          action: "Create",
+          target_table: "incidents",
+          target_id: incidentId,
+          new_value: { type, severity, road_name: roadName }
+        }]);
     }
 
     // 2. Insert the child Report
@@ -312,7 +423,10 @@ export async function POST(request: Request) {
         incident_id: incidentId,
         severity,
         notes,
-        reporter: reporter || "Community reporter"
+        reporter: finalReporter,
+        is_guest_report: isGuest,
+        ownership_token: ownershipToken,
+        reporter_id: userId
       }])
       .select()
       .single();
@@ -320,6 +434,18 @@ export async function POST(request: Request) {
     if (errNewRep || !newRep) {
       return NextResponse.json({ error: errNewRep?.message || "Failed to create report" }, { status: 500 });
     }
+
+    // Log report creation audit
+    await supabase
+      .from("audit_logs")
+      .insert([{
+        incident_id: incidentId,
+        user_id: finalReporter,
+        action: "Create",
+        target_table: "incident_reports",
+        target_id: newRep.id,
+        new_value: { severity, notes, reporter: finalReporter }
+      }]);
 
     // 3. Insert report images if provided
     if (photos.length > 0) {
@@ -337,7 +463,8 @@ export async function POST(request: Request) {
     const { data: allReports } = await supabase
       .from("incident_reports")
       .select("*, incident_images(*)")
-      .eq("incident_id", incidentId);
+      .eq("incident_id", incidentId)
+      .is("deleted_at", null);
 
     const { data: allVerifications } = await supabase
       .from("incident_verifications")
@@ -366,7 +493,9 @@ export async function POST(request: Request) {
       .update({
         severity: highestSeverity,
         confidence: newConfidence,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        last_report_at: new Date().toISOString(),
+        needs_verification: false
       })
       .eq("id", incidentId);
 
@@ -377,7 +506,9 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       incidentId,
-      isNewIncident
+      isNewIncident,
+      ownershipToken,
+      reportId: newRep.id
     }, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Failed to submit report" }, { status: 500 });

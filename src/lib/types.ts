@@ -29,6 +29,20 @@ export type FloodSeverity = SeverityLevel;
 // Incident status lifecycle
 export type IncidentStatus = "active" | "receding" | "resolved" | "archived";
 
+export type AuditLogAction = "Create" | "Update" | "Delete" | "Verify" | "Resolve" | "Archive";
+
+export type AuditLog = {
+  id: string;
+  incidentId: string;
+  userId?: string;
+  action: AuditLogAction;
+  targetTable: string;
+  targetId: string;
+  previousValue?: any;
+  newValue?: any;
+  createdAt: string;
+};
+
 // Master Incident Entity
 export type Incident = {
   id: string;
@@ -43,6 +57,10 @@ export type Incident = {
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
+  lastVerifiedAt?: string;
+  lastReportAt?: string;
+  archivedAt?: string;
+  needsVerification?: boolean;
   reports?: IncidentReport[];
   verifications?: IncidentVerification[];
   elevationMeters?: number;
@@ -50,6 +68,7 @@ export type Incident = {
   floodStartLng?: number;
   floodEndLat?: number;
   floodEndLng?: number;
+  auditLogs?: AuditLog[];
 };
 
 // Child User Report Entity
@@ -61,6 +80,11 @@ export type IncidentReport = {
   reporter: string;
   createdAt: string;
   photos: string[];
+  ownershipToken?: string;
+  isGuestReport?: boolean;
+  reporterId?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 };
 
 export type FloodReport = {
