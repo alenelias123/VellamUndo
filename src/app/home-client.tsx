@@ -43,11 +43,19 @@ const panelItems: Array<{
   { id: "route",  label: "Route",  icon: Navigation2 }
 ];
 
-const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
+const FALLBACK_CENTER_COORDS: Coordinates = { lat: 10.15, lng: 76.4 };
 
 export default function HomeClient() {
-  const { incidents, offlineQueue, isSyncing, addReport, verifyIncident, resetDemoData } =
-    useEmergencyStore();
+  const {
+    incidents,
+    offlineQueue,
+    isSyncing,
+    addReport,
+    verifyIncident,
+    editIncident,
+    deleteIncident,
+    resetDemoData
+  } = useEmergencyStore();
 
   const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
 
@@ -56,11 +64,22 @@ export default function HomeClient() {
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
   const [routesList, setRoutesList] = useState<RouteOption[]>([]);
+  const [routeOriginPin, setRouteOriginPin] = useState<Coordinates | null>(null);
+  const [routeDestinationPin, setRouteDestinationPin] = useState<Coordinates | null>(null);
+  const [routeMapPickMode, setRouteMapPickMode] = useState<"origin" | "destination" | null>(null);
+  const [routeMapPickedLocation, setRouteMapPickedLocation] = useState<{
+    mode: "origin" | "destination";
+    coordinates: Coordinates;
+    token: number;
+  } | null>(null);
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [recenterTrigger, setRecenterTrigger] = useState(0);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [isDrawingStretch, setIsDrawingStretch] = useState(false);
+  const [stretchStart, setStretchStart] = useState<Coordinates | undefined>();
+  const [stretchEnd, setStretchEnd] = useState<Coordinates | undefined>();
   const watchIdRef = useRef<number | null>(null);
 
   // ── GPS ────────────────────────────────────────────────────────────
@@ -123,8 +142,9 @@ export default function HomeClient() {
     if (selectedIncident) return selectedIncident.coordinates;
     if (pendingLocation) return pendingLocation;
     if (userLocation) return userLocation;
-    return DEFAULT_KOCHI_COORDS;
-  }, [selectedIncident, pendingLocation, userLocation, recenterTrigger]);
+    if (incidents.length > 0) return incidents[0].coordinates;
+    return FALLBACK_CENTER_COORDS;
+  }, [selectedIncident, pendingLocation, userLocation, incidents, recenterTrigger]);
 
   const severeIncidents = useMemo(() =>
     [...incidents]
@@ -143,9 +163,42 @@ export default function HomeClient() {
   );
 
   function handlePickLocation(coords: Coordinates) {
+    if (activePanel === "route" && routeMapPickMode) {
+      setRouteMapPickedLocation({
+        mode: routeMapPickMode,
+        coordinates: coords,
+        token: Date.now()
+      });
+      return;
+    }
     setPendingLocation(coords);
     setSelectedIncidentId(undefined);
     setActivePanel("report");
+  }
+
+  function handleStretchPoint(coords: Coordinates) {
+    if (!stretchStart) {
+      setStretchStart(coords);
+      return;
+    }
+    if (!stretchEnd) {
+      setStretchEnd(coords);
+      return;
+    }
+    setStretchEnd(coords);
+  }
+
+  function handleStretchChange(start: Coordinates, end: Coordinates) {
+    setStretchStart(start);
+    setStretchEnd(end);
+  }
+
+  function handleToggleStretchDrawing(active: boolean) {
+    setIsDrawingStretch(active);
+    if (!active) {
+      setStretchStart(undefined);
+      setStretchEnd(undefined);
+    }
   }
 
   function handleRouteChange(route?: RouteOption) {
@@ -250,12 +303,23 @@ export default function HomeClient() {
               selectedIncidentId={selectedIncidentId}
               activeRoute={activeRoute}
               routes={routesList}
+              routeOrigin={routeOriginPin ?? undefined}
+              routeDestination={routeDestinationPin ?? undefined}
+              routeMapPickMode={routeMapPickMode}
               onSelectRoute={handleRouteChange}
+              onRoutePinMoved={(mode, coordinates) =>
+                setRouteMapPickedLocation({ mode, coordinates, token: Date.now() })
+              }
               pendingLocation={pendingLocation}
               gpsLoading={gpsLoading}
               onRecenter={handleRecenter}
               onSelectIncident={(id) => { setSelectedIncidentId(id); setPendingLocation(undefined); }}
               onPickLocation={handlePickLocation}
+              isDrawingStretch={isDrawingStretch}
+              stretchStart={stretchStart}
+              stretchEnd={stretchEnd}
+              onStretchChange={handleStretchChange}
+              onStretchPoint={handleStretchPoint}
             />
           </div>
 
@@ -325,6 +389,8 @@ export default function HomeClient() {
               incident={selectedIncident}
               user={user}
               onVerify={verifyIncident}
+              onEdit={editIncident}
+              onDelete={deleteIncident}
               onClose={() => setSelectedIncidentId(undefined)}
               onOpenAuth={() => setAuthModalOpen(true)}
             />
@@ -336,6 +402,16 @@ export default function HomeClient() {
                   onPickLocation={handlePickLocation}
                   onSubmit={addReport}
                   onResetDemoData={resetDemoData}
+                  isDrawingStretch={isDrawingStretch}
+                  stretchStart={stretchStart}
+                  stretchEnd={stretchEnd}
+                  onToggleStretchDrawing={handleToggleStretchDrawing}
+                  onStretchChange={handleStretchChange}
+                  onStretchReset={() => {
+                    setStretchStart(undefined);
+                    setStretchEnd(undefined);
+                    setIsDrawingStretch(false);
+                  }}
                 />
               )}
               {activePanel === "route" && (
@@ -346,6 +422,12 @@ export default function HomeClient() {
                   onDestinationSelect={() => {}}
                   onRouteChange={handleRouteChange}
                   onRoutesCalculated={setRoutesList}
+                  mapPickMode={routeMapPickMode}
+                  mapPickedLocation={routeMapPickedLocation}
+                  onMapPickModeChange={setRouteMapPickMode}
+                  onMapPickHandled={() => setRouteMapPickedLocation(null)}
+                  onRouteOriginChange={setRouteOriginPin}
+                  onRouteDestinationChange={setRouteDestinationPin}
                   onSelectIncident={(id) => { setSelectedIncidentId(id); setPendingLocation(undefined); }}
                 />
               )}

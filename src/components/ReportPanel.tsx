@@ -14,7 +14,8 @@ import {
 import { useLocationSearch } from "@/hooks/useLocationSearch";
 import { compressImage, uploadImageToSupabase } from "@/lib/imageUpload";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
-import type { SearchResultPlace } from "@/lib/routing";
+import { getElevationAt } from "@/lib/elevation";
+import { haversineDistanceKm, type SearchResultPlace } from "@/lib/routing";
 import type { Coordinates, IncidentType, SeverityLevel } from "@/lib/types";
 
 type OfflineReportPayload = {
@@ -28,6 +29,11 @@ type OfflineReportPayload = {
   notes?: string;
   reporter: string;
   photos: string[];
+  elevationMeters?: number;
+  floodStartLat?: number;
+  floodStartLng?: number;
+  floodEndLat?: number;
+  floodEndLng?: number;
 };
 
 type ReportPanelProps = {
@@ -35,6 +41,12 @@ type ReportPanelProps = {
   onPickLocation: (coords: Coordinates) => void;
   onSubmit: (input: OfflineReportPayload) => Promise<boolean>;
   onResetDemoData: () => void;
+  isDrawingStretch?: boolean;
+  stretchStart?: Coordinates;
+  stretchEnd?: Coordinates;
+  onToggleStretchDrawing?: (active: boolean) => void;
+  onStretchChange?: (start: Coordinates, end: Coordinates) => void;
+  onStretchReset?: () => void;
 };
 
 const incidentTypes = Object.keys(incidentTypeMeta) as IncidentType[];
@@ -44,7 +56,13 @@ export function ReportPanel({
   pendingLocation,
   onPickLocation,
   onSubmit,
-  onResetDemoData
+  onResetDemoData,
+  isDrawingStretch = false,
+  stretchStart,
+  stretchEnd,
+  onToggleStretchDrawing,
+  onStretchChange,
+  onStretchReset
 }: ReportPanelProps) {
   const [roadName, setRoadName] = useState("");
   const [landmark, setLandmark] = useState("");
@@ -53,6 +71,7 @@ export function ReportPanel({
   const [severity, setSeverity] = useState<SeverityLevel>("WATERLOGGED");
   const [notes, setNotes] = useState("");
   const [reporter, setReporter] = useState("");
+  const [elevationMeters, setElevationMeters] = useState<number | undefined>();
 
   // Custom location search state
   const location$ = useLocationSearch();
@@ -97,6 +116,17 @@ export function ReportPanel({
     }
 
     reverseGeocode();
+  }, [pendingLocation]);
+
+  // Look up ground elevation for the report location so the router can
+  // compare altitudes when scoring nearby routes (see src/lib/routing.ts).
+  useEffect(() => {
+    if (!pendingLocation) return;
+    let cancelled = false;
+    getElevationAt(pendingLocation).then((elev) => {
+      if (!cancelled && elev !== undefined) setElevationMeters(Math.round(elev));
+    });
+    return () => { cancelled = true; };
   }, [pendingLocation]);
 
   function requestGPS() {
@@ -203,7 +233,12 @@ export function ReportPanel({
       district,
       notes: notes.trim() || undefined,
       reporter: reporter.trim() || "Community reporter",
-      photos: uploadedUrls
+      photos: uploadedUrls,
+      elevationMeters,
+      floodStartLat: stretchStart?.lat,
+      floodStartLng: stretchStart?.lng,
+      floodEndLat: stretchEnd?.lat,
+      floodEndLng: stretchEnd?.lng
     };
 
     try {
@@ -211,6 +246,7 @@ export function ReportPanel({
       setSubmitSuccess(true);
       setNotes("");
       setUploadQueue([]);
+      onStretchReset?.();
       setTimeout(() => setSubmitSuccess(false), 3000);
     } catch {
       alert("Submission error. Saved locally to sync later.");
@@ -359,6 +395,53 @@ export function ReportPanel({
                 </ul>
               ) : null}
             </div>
+          </div>
+
+          {/* ── Flooded road stretch ───────────────────────── */}
+          <div className="span-2 stretch-tool-card">
+            <div className="stretch-tool-head">
+              <span className="stretch-tool-label">
+                <MapPin size={13} />
+                Flooded road stretch
+              </span>
+              <button
+                type="button"
+                className={`stretch-toggle-btn${isDrawingStretch ? " stretch-toggle-btn--active" : ""}`}
+                onClick={() => onToggleStretchDrawing?.(!isDrawingStretch)}
+                title="Draw the exact flooded length of the road on the map"
+              >
+                {isDrawingStretch ? "Cancel drawing" : "Draw stretch"}
+              </button>
+            </div>
+
+            {isDrawingStretch ? (
+              <p className="stretch-hint">
+                Click on the map to mark the <strong>start</strong>, then the{" "}
+                <strong>end</strong> of the flooded road. Drag the S / E markers to fine-tune.
+              </p>
+            ) : null}
+
+            {stretchStart && stretchEnd ? (
+              <div className="stretch-status-row">
+                <span className="stretch-status-chip">
+                  🌊 {haversineDistanceKm(stretchStart, stretchEnd).toFixed(2)} km flooded
+                </span>
+                <span className="stretch-status-coords">
+                  ({stretchStart.lat.toFixed(4)}, {stretchStart.lng.toFixed(4)}) → (
+                  {stretchEnd.lat.toFixed(4)}, {stretchEnd.lng.toFixed(4)})
+                </span>
+                <button
+                  type="button"
+                  className="stretch-clear-btn"
+                  onClick={onStretchReset}
+                  title="Clear the drawn flooded stretch"
+                >
+                  <X size={12} /> Clear
+                </button>
+              </div>
+            ) : stretchStart ? (
+              <p className="stretch-hint">Start marked — now click the map for the end of the stretch.</p>
+            ) : null}
           </div>
 
           {/* ── Incident type ──────────────────────────────── */}

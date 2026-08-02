@@ -45,6 +45,11 @@ export type Incident = {
   resolvedAt?: string;
   reports?: IncidentReport[];
   verifications?: IncidentVerification[];
+  elevationMeters?: number;
+  floodStartLat?: number;
+  floodStartLng?: number;
+  floodEndLat?: number;
+  floodEndLng?: number;
 };
 
 // Child User Report Entity

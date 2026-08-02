@@ -13,6 +13,11 @@ create table if not exists public.incidents (
   latitude double precision not null,
   longitude double precision not null,
   confidence integer default 0 check (confidence between 0 and 100),
+  elevation_meters double precision,
+  flood_start_lat double precision,
+  flood_start_lng double precision,
+  flood_end_lat double precision,
+  flood_end_lng double precision,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   resolved_at timestamptz

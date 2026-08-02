@@ -1,4 +1,5 @@
 import { severityRank, formatRelativeTime } from "./floodReports";
+import { fetchElevations, elevationKey } from "./elevation";
 import type { Coordinates, Incident, RouteOption, RouteAnalysis, SeverityLevel } from "./types";
 
 export type SearchResultPlace = {
@@ -172,25 +173,28 @@ export async function calculateRoadRoutes(
     return [buildOfflineNotice(origin, destination, activeIncidents)];
   }
 
-  // ── Step 2: Build RouteOptions from all OSRM alternatives ─────────────────
-  const rawRoutes: RouteOption[] = primaryOsrm.routes.map((osrmRoute: any, i: number) => {
+  // ── Step 2: Build raw route geometries from all OSRM alternatives ─────────
+  // Drafts carry only geometry/time/distance — analysis (which needs elevation
+  // data) is attached afterwards in Step 4.
+  type RouteDraft = {
+    id: string;
+    nameHint: string;
+    isDetour: boolean;
+    coordinates: Coordinates[];
+    distanceKm: number;
+    baseMinutes: number;
+  };
+
+  const rawDrafts: RouteDraft[] = primaryOsrm.routes.map((osrmRoute: any, i: number) => {
     const coords = osrmRouteToCoords(osrmRoute);
-    const distKm = Number((osrmRoute.distance / 1000).toFixed(1));
-    const baseMin = Math.round(osrmRoute.duration / 60);
-    const analysis = analyzeRoute(coords, activeIncidents, distKm, baseMin);
-    const exposure = calculateFloodExposure(coords, activeIncidents);
     return {
       id: `osrm-${i}`,
-      name: i === 0 ? labelRouteName(analysis.floodRisk, false) : `Alternate Route ${i}`,
-      summary: buildSummary(analysis),
+      nameHint: i === 0 ? "primary" : `Alternate Route ${i}`,
+      isDetour: false,
       coordinates: coords,
-      distanceKm: distKm,
-      estimatedMinutes: baseMin + analysis.estimatedDelayMinutes,
-      floodExposure: Number(exposure.toFixed(1)),
-      confidence: Math.max(40, Math.min(98, Math.round(98 - exposure * 8))),
-      warnings: analysis.riskExplanations,
-      analysis
-    } satisfies RouteOption;
+      distanceKm: Number((osrmRoute.distance / 1000).toFixed(1)),
+      baseMinutes: Math.round(osrmRoute.duration / 60)
+    };
   });
 
   // ── Step 3: Generate systematic detour waypoints ──────────────────────────
@@ -216,45 +220,74 @@ export async function calculateRoadRoutes(
   );
   const detourResults = await Promise.allSettled(detourFetches);
 
-  const extraRoutes: RouteOption[] = [];
+  const extraDrafts: RouteDraft[] = [];
   detourResults.forEach((result, idx) => {
     if (result.status !== "fulfilled" || !result.value) return;
     const osrmRoute = result.value.routes[0];
     if (!osrmRoute) return;
 
     const coords = osrmRouteToCoords(osrmRoute);
-    const distKm = Number((osrmRoute.distance / 1000).toFixed(1));
-    const baseMin = Math.round(osrmRoute.duration / 60);
+    const distanceKm = Number((osrmRoute.distance / 1000).toFixed(1));
+    const baseMinutes = Math.round(osrmRoute.duration / 60);
 
     // Skip if geometry is too similar to an already-collected route (dedup)
-    const isDuplicate = [...rawRoutes, ...extraRoutes].some(
+    const isDuplicate = [...rawDrafts, ...extraDrafts].some(
       (existing) => routeSimilarity(existing.coordinates, coords) > 0.82
     );
     if (isDuplicate) return;
 
     // Skip if it's absurdly longer than the primary (> 2.5× distance)
-    if (distKm > rawRoutes[0].distanceKm * 2.5) return;
+    if (distanceKm > rawDrafts[0].distanceKm * 2.5) return;
 
-    const analysis = analyzeRoute(coords, activeIncidents, distKm, baseMin);
-    const exposure = calculateFloodExposure(coords, activeIncidents);
-
-    extraRoutes.push({
+    extraDrafts.push({
       id: `detour-wp-${idx}`,
-      name: labelRouteName(analysis.floodRisk, true),
-      summary: buildSummary(analysis),
+      nameHint: "detour",
+      isDetour: true,
       coordinates: coords,
-      distanceKm: distKm,
-      estimatedMinutes: baseMin + analysis.estimatedDelayMinutes,
-      floodExposure: Number(exposure.toFixed(1)),
-      confidence: Math.max(40, Math.min(95, Math.round(95 - exposure * 8))),
-      warnings: analysis.riskExplanations,
-      analysis
+      distanceKm,
+      baseMinutes
     });
   });
 
-  const allRoutes = [...rawRoutes, ...extraRoutes];
+  const drafts = [...rawDrafts, ...extraDrafts];
 
-  // ── Step 4: Sort and return ───────────────────────────────────────────────
+  // ── Step 4: Resolve elevation data for altitude-aware health scoring ──────
+  // A road that sits on higher ground than a reported flood won't be flooded
+  // even when it passes nearby — so nearby, higher routes keep a high health
+  // score instead of being rejected in favour of distant detours.
+  const elevations = await resolveElevationsForRoutes(drafts, activeIncidents);
+
+  // ── Step 5: Attach flood analysis and return sorted options ───────────────
+  const allRoutes: RouteOption[] = drafts.map((draft) => {
+    const analysis = analyzeRoute(
+      draft.coordinates,
+      activeIncidents,
+      draft.distanceKm,
+      draft.baseMinutes,
+      elevations
+    );
+    const exposure = calculateFloodExposure(draft.coordinates, activeIncidents, elevations);
+    return {
+      id: draft.id,
+      name: draft.isDetour
+        ? labelRouteName(analysis.floodRisk, true)
+        : draft.nameHint === "primary"
+          ? labelRouteName(analysis.floodRisk, false)
+          : draft.nameHint,
+      summary: buildSummary(analysis),
+      coordinates: draft.coordinates,
+      distanceKm: draft.distanceKm,
+      estimatedMinutes: draft.baseMinutes + analysis.estimatedDelayMinutes,
+      floodExposure: Number(exposure.toFixed(1)),
+      confidence: draft.isDetour
+        ? Math.max(40, Math.min(95, Math.round(95 - exposure * 8)))
+        : Math.max(40, Math.min(98, Math.round(98 - exposure * 8))),
+      warnings: analysis.riskExplanations,
+      analysis
+    } satisfies RouteOption;
+  });
+
+  // ── Step 6: Sort and return ───────────────────────────────────────────────
   return allRoutes.sort((a, b) => {
     const rDiff =
       riskWeight(a.analysis?.floodRisk ?? "LOW") -
@@ -296,20 +329,28 @@ export function findBlockagePoint(
 }
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
-export function calculateFloodExposure(route: Coordinates[], incidents: Incident[]): number {
+export function calculateFloodExposure(
+  route: Coordinates[],
+  incidents: Incident[],
+  elevations?: Record<string, number>
+): number {
   if (!incidents?.length) return 0;
   let exposure = 0;
   for (const incident of incidents) {
     if (incident.status === "resolved" || incident.status === "archived") continue;
-    const dist = getNearestSegmentDistanceKm(incident.coordinates, route);
+    const { distanceKm, point } = getNearestSegmentInfo(incident.coordinates, route);
     const rank = severityRank[incident.severity] || 0;
     const radius = rank >= 3 ? 2.5 : 1.2;
-    if (dist < radius) {
-      const proximity = Math.max(0, 1 - dist / radius);
+    if (distanceKm < radius) {
+      const proximity = Math.max(0, 1 - distanceKm / radius);
       const age = getIncidentAgeFactor(incident.updatedAt);
       const conf = 1.0 + incident.confidence * 0.01;
       const vol = isVolunteerVerified(incident) ? 1.5 : 1.0;
-      exposure += proximity * rank * age * conf * vol;
+      const alt = getAltitudeFactor(
+        elevations?.[elevationKey(point)],
+        getIncidentElevation(incident, elevations)
+      );
+      exposure += proximity * rank * age * conf * vol * alt;
     }
   }
   return exposure;
@@ -319,19 +360,26 @@ export function analyzeRoute(
   coords: Coordinates[],
   incidents: Incident[],
   distanceKm: number,
-  baseMinutes: number
+  baseMinutes: number,
+  elevations?: Record<string, number>
 ): RouteAnalysis {
   const affected: Incident[] = [];
   for (const inc of incidents) {
     if (inc.status === "resolved" || inc.status === "archived") continue;
     const rank = severityRank[inc.severity] || 0;
     const radius = rank >= 3 ? 2.5 : 1.2;
-    if (getNearestSegmentDistanceKm(inc.coordinates, coords) < radius) {
-      affected.push(inc);
+    const { distanceKm: segDist, point } = getNearestSegmentInfo(inc.coordinates, coords);
+    if (segDist < radius) {
+      const alt = getAltitudeFactor(
+        elevations?.[elevationKey(point)],
+        getIncidentElevation(inc, elevations)
+      );
+      // Only count incidents that genuinely threaten a route at this altitude.
+      if (alt > 0.5) affected.push(inc);
     }
   }
 
-  const exposure = calculateFloodExposure(coords, incidents);
+  const exposure = calculateFloodExposure(coords, incidents, elevations);
   const estimatedDelayMinutes = Math.round(exposure * 3.5);
 
   let floodRisk: RouteAnalysis["floodRisk"] = "LOW";
@@ -467,13 +515,76 @@ function getIncidentAgeFactor(updatedAt: string): number {
   return 1.0;
 }
 
-function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
+/**
+ * Resolve ground elevation for the incident anchors plus the portion of every
+ * route that runs near a flood zone. Only points close to an incident matter
+ * for the altitude-aware health score, which keeps the elevation lookups cheap.
+ */
+async function resolveElevationsForRoutes(
+  drafts: Array<{ coordinates: Coordinates[] }>,
+  incidents: Incident[]
+): Promise<Record<string, number>> {
+  if (incidents.length === 0) return {};
+  const coords: Coordinates[] = incidents.map((inc) => inc.coordinates);
+  for (const draft of drafts) {
+    const step = Math.max(1, Math.floor(draft.coordinates.length / 40));
+    for (let i = 0; i < draft.coordinates.length; i += step) {
+      const point = draft.coordinates[i];
+      const nearFlood = incidents.some(
+        (inc) => haversineDistanceKm(point, inc.coordinates) < 3.0
+      );
+      if (nearFlood) coords.push(point);
+    }
+  }
+  return fetchElevations(coords);
+}
+
+/**
+ * Altitude-aware flood factor.
+ * Returns how strongly a flood incident should impact a route:
+ *   0  → the road sits meaningfully higher than the reported flood water, so
+ *        the flood cannot reach it (no impact),
+ *   1  → the road is at/below the flood's elevation (full impact),
+ *   linear interpolation in between.
+ * When either elevation is unknown we assume the worst (factor = 1), i.e. the
+ * legacy proximity-only behaviour.
+ */
+function getAltitudeFactor(routeElevation: number | undefined, floodElevation: number | undefined): number {
+  if (routeElevation === undefined || floodElevation === undefined) return 1;
+  const lowerBound = floodElevation - 1.0;
+  const upperBound = floodElevation + 2.5;
+  if (routeElevation <= lowerBound) return 1;
+  if (routeElevation >= upperBound) return 0;
+  return (upperBound - routeElevation) / (upperBound - lowerBound);
+}
+
+function getIncidentElevation(
+  incident: Incident,
+  elevations?: Record<string, number>
+): number | undefined {
+  if (incident.elevationMeters !== undefined) return incident.elevationMeters;
+  return elevations?.[elevationKey(incident.coordinates)];
+}
+
+function getNearestSegmentInfo(
+  point: Coordinates,
+  route: Coordinates[]
+): { distanceKm: number; point: Coordinates } {
   let nearest = Number.POSITIVE_INFINITY;
+  let nearestPoint = route[0];
   const step = Math.max(1, Math.floor(route.length / 80));
   for (let i = step; i < route.length; i += step) {
-    nearest = Math.min(nearest, distancePointToSegmentKm(point, route[i - step], route[i]));
+    const dist = distancePointToSegmentKm(point, route[i - step], route[i]);
+    if (dist < nearest) {
+      nearest = dist;
+      nearestPoint = route[i];
+    }
   }
-  return nearest;
+  return { distanceKm: nearest, point: nearestPoint };
+}
+
+function getNearestSegmentDistanceKm(point: Coordinates, route: Coordinates[]): number {
+  return getNearestSegmentInfo(point, route).distanceKm;
 }
 
 function distancePointToSegmentKm(

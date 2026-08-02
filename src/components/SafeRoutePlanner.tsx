@@ -3,15 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Ban,
   CheckCircle2,
   Clock3,
   Copy,
-  Crosshair,
   ExternalLink,
   Info,
   Layers,
   Loader2,
+  LocateFixed,
   MapPin,
   Navigation2,
   Route,
@@ -27,8 +28,6 @@ import {
 import { useLocationSearch } from "@/hooks/useLocationSearch";
 import type { Coordinates, Incident, RouteOption } from "@/lib/types";
 
-const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
-
 type SafeRoutePlannerProps = {
   userLocation: Coordinates | null;
   incidents: Incident[];
@@ -37,6 +36,12 @@ type SafeRoutePlannerProps = {
   onRouteChange: (route?: RouteOption) => void;
   onRoutesCalculated?: (routes: RouteOption[]) => void;
   onSelectIncident?: (id: string) => void;
+  mapPickMode?: "origin" | "destination" | null;
+  mapPickedLocation?: { mode: "origin" | "destination"; coordinates: Coordinates; token: number } | null;
+  onMapPickModeChange?: (mode: "origin" | "destination" | null) => void;
+  onMapPickHandled?: () => void;
+  onRouteOriginChange?: (origin: Coordinates | null) => void;
+  onRouteDestinationChange?: (destination: Coordinates | null) => void;
 };
 
 export function SafeRoutePlanner({
@@ -46,7 +51,13 @@ export function SafeRoutePlanner({
   onDestinationSelect,
   onRouteChange,
   onRoutesCalculated,
-  onSelectIncident
+  onSelectIncident,
+  mapPickMode = null,
+  mapPickedLocation = null,
+  onMapPickModeChange,
+  onMapPickHandled,
+  onRouteOriginChange,
+  onRouteDestinationChange
 }: SafeRoutePlannerProps) {
   // ── Destination & origin typeahead ────────────────────────────────
   const dest = useLocationSearch();
@@ -61,7 +72,8 @@ export function SafeRoutePlanner({
 
   // ── Origin typeahead ──────────────────────────────────────────────
   const [customOrigin, setCustomOrigin] = useState<Coordinates | null>(null);
-  const [showOriginSearch, setShowOriginSearch] = useState(false);
+  const [activeSearchField, setActiveSearchField] = useState<"origin" | "destination" | null>(null);
+  const [routeInputError, setRouteInputError] = useState("");
   const originQuery = origin$.query;
   const destinationQuery = dest.query;
 
@@ -69,16 +81,27 @@ export function SafeRoutePlanner({
   const lastRerouteAtRef = useRef<number>(0);
   const lastIncidentsKeyRef = useRef<string>("");
   const rerouteRequestIdRef = useRef<number>(0);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        setActiveSearchField(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const origin = useMemo(
-    () => customOrigin ?? userLocation ?? DEFAULT_KOCHI_COORDS,
+    () => customOrigin ?? userLocation,
     [customOrigin, userLocation]
   );
 
   const originLabel = useMemo(() => {
     if (customOrigin) return originQuery || "Custom Location";
     if (userLocation) return "Your GPS Location";
-    return "Kochi (Default)";
+    return "";
   }, [customOrigin, originQuery, userLocation]);
 
   const incidentsKey = useMemo(
@@ -95,21 +118,27 @@ export function SafeRoutePlanner({
     setCustomOrigin(place.coordinates);
     origin$.setQuery(place.name);
     origin$.clearSuggestions();
-    setShowOriginSearch(false);
+    setRouteInputError("");
     lastRerouteOriginRef.current = null;
     lastRerouteAtRef.current = 0;
+    onMapPickModeChange?.(null);
   }
 
   function clearCustomOrigin() {
     setCustomOrigin(null);
     origin$.setQuery("");
     origin$.clearSuggestions();
-    setShowOriginSearch(false);
     lastRerouteOriginRef.current = null;
     lastRerouteAtRef.current = 0;
+    onMapPickModeChange?.(null);
   }
 
   async function selectDestination(place: SearchResultPlace) {
+    if (!origin) {
+      setRouteInputError("Set source location first.");
+      return;
+    }
+    setRouteInputError("");
     setSelectedDestination(place);
     dest.setQuery(place.name);
     dest.clearSuggestions();
@@ -124,6 +153,7 @@ export function SafeRoutePlanner({
       lastRerouteOriginRef.current = origin;
       lastRerouteAtRef.current = Date.now();
       lastIncidentsKeyRef.current = incidentsKey;
+      onMapPickModeChange?.(null);
     } finally {
       setIsCalculating(false);
     }
@@ -140,11 +170,87 @@ export function SafeRoutePlanner({
     lastRerouteOriginRef.current = null;
     lastRerouteAtRef.current = 0;
     lastIncidentsKeyRef.current = "";
+    onRouteDestinationChange?.(null);
+    onMapPickModeChange?.(null);
   }
+
+  function toggleMapPickMode(mode: "origin" | "destination") {
+    onMapPickModeChange?.(mapPickMode === mode ? null : mode);
+  }
+
+  async function useGpsAsSource() {
+    if (!userLocation) return;
+    setCustomOrigin(userLocation);
+    setRouteInputError("");
+    try {
+      const res = await fetch(`/api/geocode?lat=${userLocation.lat}&lng=${userLocation.lng}`);
+      if (res.ok) {
+        const data = await res.json();
+        const label = [data.roadName, data.landmark].filter(Boolean).join(", ").trim();
+        origin$.setQuery(label || "Current Location");
+      } else {
+        origin$.setQuery("Current Location");
+      }
+    } catch {
+      origin$.setQuery("Current Location");
+    }
+    origin$.clearSuggestions();
+  }
+
+  async function swapSourceDestination() {
+    if (!origin || !selectedDestination) return;
+    const oldOrigin = origin;
+    const oldOriginName = originQuery.trim() || originLabel || "Current Location";
+    const oldDestination = selectedDestination;
+
+    setCustomOrigin(oldDestination.coordinates);
+    origin$.setQuery(oldDestination.name);
+    origin$.clearSuggestions();
+
+    const newDestination: SearchResultPlace = {
+      id: `swap-dest-${Date.now()}`,
+      name: oldOriginName,
+      fullName: oldOriginName,
+      coordinates: oldOrigin
+    };
+    await selectDestination(newDestination);
+  }
+
+  useEffect(() => {
+    onRouteOriginChange?.(origin ?? null);
+  }, [onRouteOriginChange, origin]);
+
+  useEffect(() => {
+    onRouteDestinationChange?.(selectedDestination?.coordinates ?? null);
+  }, [onRouteDestinationChange, selectedDestination]);
+
+  useEffect(() => {
+    if (!mapPickedLocation) return;
+    if (mapPickedLocation.mode === "origin") {
+      setCustomOrigin(mapPickedLocation.coordinates);
+      origin$.setQuery(
+        `Pinned (${mapPickedLocation.coordinates.lat.toFixed(5)}, ${mapPickedLocation.coordinates.lng.toFixed(5)})`
+      );
+      origin$.clearSuggestions();
+      setRouteInputError("");
+      lastRerouteOriginRef.current = null;
+      lastRerouteAtRef.current = 0;
+    } else {
+      const coords = mapPickedLocation.coordinates;
+      const place: SearchResultPlace = {
+        id: `pin-dest-${mapPickedLocation.token}`,
+        name: `Pinned Destination (${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`,
+        fullName: `Pinned Destination at ${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`,
+        coordinates: coords
+      };
+      void selectDestination(place);
+    }
+    onMapPickHandled?.();
+  }, [mapPickedLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-reroute when origin or incidents change ──────────────────
   useEffect(() => {
-    if (!selectedDestination) return;
+    if (!selectedDestination || !origin) return;
 
     const now = Date.now();
     const movedKm = lastRerouteOriginRef.current
@@ -197,22 +303,26 @@ export function SafeRoutePlanner({
   }
 
   function openNavigation(routeOption: RouteOption, provider: "google" | "organic") {
+    const start = origin ?? routeOption.coordinates[0];
     const dest =
       selectedDestination?.coordinates ??
       routeOption.coordinates[routeOption.coordinates.length - 1];
+    if (!start || !dest) return;
     const url =
       provider === "google"
-        ? `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}&travelmode=driving`
-        : `omim://route?sll=${origin.lat},${origin.lng}&dll=${dest.lat},${dest.lng}&type=vehicle`;
+        ? `https://www.google.com/maps/dir/?api=1&origin=${start.lat},${start.lng}&destination=${dest.lat},${dest.lng}&travelmode=driving`
+        : `omim://route?sll=${start.lat},${start.lng}&dll=${dest.lat},${dest.lng}&type=vehicle`;
     window.open(url, "_blank");
   }
 
   function handleCopyCoordinates(routeOption: RouteOption) {
+    const start = origin ?? routeOption.coordinates[0];
     const dest =
       selectedDestination?.coordinates ??
       routeOption.coordinates[routeOption.coordinates.length - 1];
+    if (!start || !dest) return;
     navigator.clipboard.writeText(
-      `Start: ${origin.lat},${origin.lng} -> End: ${dest.lat},${dest.lng}`
+      `Start: ${start.lat},${start.lng} -> End: ${dest.lat},${dest.lng}`
     );
     setCopiedId(routeOption.id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -229,9 +339,22 @@ export function SafeRoutePlanner({
 
   const areAllRoutesBlocked =
     routes.length > 0 && routes.every((r) => (r.analysis?.routeHealth ?? 100) < 50);
+  const primaryRoute = useMemo(
+    () => routes.find((r) => r.id === "osrm-0") ?? null,
+    [routes]
+  );
+  const isPrimaryRouteBlocked = primaryRoute
+    ? (primaryRoute.analysis?.routeHealth ?? 100) === 0 ||
+      primaryRoute.analysis?.floodRisk === "EXTREME"
+    : false;
 
   // ── Route card renderer ───────────────────────────────────────────
-  function renderRouteCard(option: RouteOption, availableIndex: number, isBlockedSection: boolean) {
+  function renderRouteCard(
+    option: RouteOption,
+    availableIndex: number,
+    isBlockedSection: boolean,
+    isPrimaryBlockedRoute = false
+  ) {
     const isSelected = activeRoute?.id === option.id;
     const analysis = option.analysis;
     const risk = analysis?.floodRisk ?? "LOW";
@@ -246,7 +369,8 @@ export function SafeRoutePlanner({
         className={[
           "route-card2",
           isSelected ? "route-card2--active" : "",
-          isBlocked ? "route-card2--blocked" : ""
+          isBlocked ? "route-card2--blocked" : "",
+          isPrimaryBlockedRoute ? "route-card2--critical-blocked" : ""
         ].join(" ")}
       >
         {/* Card header */}
@@ -266,6 +390,9 @@ export function SafeRoutePlanner({
               <span className="route-blocked-badge">
                 <Ban size={10} /> Impassable
               </span>
+            ) : null}
+            {isPrimaryBlockedRoute ? (
+              <span className="route-primary-blocked-tag">Primary route blocked</span>
             ) : null}
           </button>
           <span
@@ -391,139 +518,145 @@ export function SafeRoutePlanner({
           <p className="eyebrow">Flood Advisor Mode</p>
           <h2>Safe Route Navigation</h2>
         </div>
-        <Navigation2 size={20} className="brand-accent" />
+        <div className="route-header-actions">
+          <button
+            type="button"
+            className="top-gps-btn"
+            onClick={() => { void useGpsAsSource(); }}
+            disabled={!userLocation}
+            title="Set current GPS location as starting address"
+          >
+            <LocateFixed size={14} />
+            <span>Use GPS</span>
+          </button>
+          <button
+            type="button"
+            className="top-swap-btn"
+            onClick={() => { void swapSourceDestination(); }}
+            disabled={!origin || !selectedDestination}
+            title="Swap starting location and destination"
+          >
+            <ArrowUpDown size={14} />
+            <span>Swap</span>
+          </button>
+        </div>
       </div>
 
-      {/* ── From / To card ──────────────────────────────── */}
-      <div className="route-inputs-card">
+      {/* ── Direct Source & Destination Search Card ───────── */}
+      <div className="route-inputs-card" ref={cardRef}>
 
-        {/* From row */}
-        <div className="route-input-row">
-          <span className="route-dot route-dot--origin" />
-          <div className="route-input-content">
-            <span className="route-input-eyebrow">From</span>
-            <span className={`route-input-value ${customOrigin ? "route-input-value--custom" : ""}`}>
-              {originLabel}
-            </span>
-          </div>
-          <div className="route-input-actions">
-            <button
-              type="button"
-              className="route-chip-btn"
-              onClick={() => setShowOriginSearch((v) => !v)}
-            >
-              {showOriginSearch ? <X size={12} /> : <Search size={12} />}
-              {showOriginSearch ? "Cancel" : "Change"}
-            </button>
-            {customOrigin ? (
+        {/* Source (From) Search Field */}
+        <div className="route-field-group">
+          <div className="route-input-box">
+            <span className="route-field-dot route-field-dot--origin" title="Start location" />
+            <div className="route-input-flex">
+              <span className="route-field-label">FROM</span>
+              <input
+                type="text"
+                className="route-search-input"
+                placeholder="Search source (e.g. Aluva, Edappally…)"
+                value={originQuery}
+                onFocus={() => setActiveSearchField("origin")}
+                onChange={(e) => {
+                  origin$.setQuery(e.target.value);
+                  if (!e.target.value) {
+                    origin$.clearSuggestions();
+                    clearCustomOrigin();
+                  }
+                }}
+                onKeyDown={(e) => {
+                  origin$.handleKeyDown(e, selectOrigin);
+                  if (
+                    e.key === "Enter" &&
+                    !e.defaultPrevented &&
+                    origin$.suggestions.length > 0
+                  ) {
+                    e.preventDefault();
+                    selectOrigin(origin$.suggestions[0]);
+                  }
+                }}
+              />
+            </div>
+            <div className="route-field-actions">
+              {origin$.isLoading ? (
+                <Loader2 size={14} className="report-spin" />
+              ) : originQuery || customOrigin ? (
+                <button
+                  type="button"
+                  className="route-icon-action-btn"
+                  onClick={clearCustomOrigin}
+                  title="Clear source location"
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+
               <button
                 type="button"
-                className="route-chip-btn route-chip-btn--ghost"
-                onClick={clearCustomOrigin}
-                title="Use GPS"
+                className={`route-map-pick-btn ${mapPickMode === "origin" ? "route-map-pick-btn--active" : ""}`}
+                onClick={() => toggleMapPickMode("origin")}
+                title="Pick starting location on map"
               >
-                <Crosshair size={12} />
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        {/* Origin search panel */}
-        {showOriginSearch ? (
-          <div className="route-inline-search">
-            <div className="location-search-row">
-              <div className="location-search-input-wrap">
-                <Search size={13} className="location-search-icon" />
-                <input
-                  type="text"
-                  className="location-search-input"
-                  placeholder="e.g. Aluva, Edappally, Kakkanad…"
-                  value={originQuery}
-                  autoFocus
-                  onChange={(e) => {
-                    origin$.setQuery(e.target.value);
-                    if (!e.target.value) origin$.clearSuggestions();
-                  }}
-                  onKeyDown={(e) => {
-                    origin$.handleKeyDown(e, selectOrigin);
-                    if (
-                      e.key === "Enter" &&
-                      !e.defaultPrevented &&
-                      origin$.suggestions.length > 0
-                    ) {
-                      e.preventDefault();
-                      selectOrigin(origin$.suggestions[0]);
-                    }
-                  }}
-                />
-                {originQuery ? (
-                  <button type="button" className="location-search-clear"
-                    onClick={() => { origin$.setQuery(""); origin$.clearSuggestions(); }}>
-                    <X size={12} />
-                  </button>
-                ) : null}
-              </div>
-              <button type="button" className="location-search-btn"
-                onClick={() => origin$.setQuery(originQuery)}
-                disabled={origin$.isLoading || originQuery.trim().length < 2}>
-                {origin$.isLoading ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
+                <MapPin size={13} />
+                <span>Map</span>
               </button>
             </div>
-            {origin$.error ? <p className="location-search-error">{origin$.error}</p> : null}
-            {origin$.suggestions.length > 0 ? (
-              <ul className="location-search-results">
-                {origin$.suggestions.map((r) => (
-                  <li key={r.id}>
-                    <button type="button" onClick={() => selectOrigin(r)}>
-                      <strong>📍 {r.name}</strong>
+          </div>
+
+          {/* Source Suggestions Floating Dropdown */}
+          {activeSearchField === "origin" && origin$.suggestions.length > 0 ? (
+            <ul className="route-suggestions-dropdown">
+              {origin$.suggestions.map((r, idx) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    className={`route-suggestion-item ${origin$.highlightedIndex === idx ? "is-highlighted" : ""}`}
+                    onClick={() => selectOrigin(r)}
+                  >
+                    <MapPin size={13} className="route-suggestion-icon route-suggestion-icon--origin" />
+                    <div className="route-suggestion-text">
+                      <strong>{r.name}</strong>
                       <small>{r.fullName}</small>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Divider */}
-        <div className="route-inputs-divider" />
-
-        {/* To row */}
-        <div className="route-input-row">
-          <span className="route-dot route-dot--dest" />
-          <div className="route-input-content">
-            <span className="route-input-eyebrow">To</span>
-            {selectedDestination ? (
-              <span className="route-input-value route-input-value--selected">
-                {selectedDestination.name}
-              </span>
-            ) : (
-              <span className="route-input-value route-input-value--empty">
-                Search a destination…
-              </span>
-            )}
-          </div>
-          {selectedDestination ? (
-            <button type="button" className="route-chip-btn route-chip-btn--ghost"
-              onClick={clearDestination} title="Clear destination">
-              <X size={12} />
-            </button>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
 
-        {/* Destination search */}
-        <div className="route-inline-search">
-          <div className="location-search-row">
-            <div className="location-search-input-wrap">
-              <MapPin size={13} className="location-search-icon" />
+        {/* Central Swap Divider Button */}
+        <div className="route-swap-divider">
+          <div className="route-swap-line" />
+          <button
+            type="button"
+            className="route-swap-center-btn"
+            onClick={() => { void swapSourceDestination(); }}
+            disabled={!origin || !selectedDestination}
+            title="Swap source and destination"
+          >
+            <ArrowUpDown size={14} />
+          </button>
+          <div className="route-swap-line" />
+        </div>
+
+        {/* Destination (To) Search Field */}
+        <div className="route-field-group">
+          <div className="route-input-box">
+            <span className="route-field-dot route-field-dot--dest" title="Destination location" />
+            <div className="route-input-flex">
+              <span className="route-field-label">TO</span>
               <input
                 type="text"
-                className="location-search-input"
-                placeholder="e.g. Aluva, Marine Drive, Thrissur…"
+                className="route-search-input"
+                placeholder="Search destination (e.g. Marine Drive, Thrissur…)"
                 value={destinationQuery}
+                onFocus={() => setActiveSearchField("destination")}
                 onChange={(e) => {
                   dest.setQuery(e.target.value);
-                  if (!e.target.value) dest.clearSuggestions();
+                  if (!e.target.value) {
+                    clearDestination();
+                  }
                 }}
                 onKeyDown={(e) => {
                   dest.handleKeyDown(e, (place) => {
@@ -539,33 +672,59 @@ export function SafeRoutePlanner({
                   }
                 }}
               />
-              {destinationQuery ? (
-                <button type="button" className="location-search-clear"
-                  onClick={() => { dest.setQuery(""); dest.clearSuggestions(); }}>
-                  <X size={12} />
+            </div>
+            <div className="route-field-actions">
+              {dest.isLoading ? (
+                <Loader2 size={14} className="report-spin" />
+              ) : destinationQuery || selectedDestination ? (
+                <button
+                  type="button"
+                  className="route-icon-action-btn"
+                  onClick={clearDestination}
+                  title="Clear destination"
+                >
+                  <X size={14} />
                 </button>
               ) : null}
+
+              <button
+                type="button"
+                className={`route-map-pick-btn ${mapPickMode === "destination" ? "route-map-pick-btn--active" : ""}`}
+                onClick={() => toggleMapPickMode("destination")}
+                title="Pick destination location on map"
+              >
+                <MapPin size={13} />
+                <span>Map</span>
+              </button>
             </div>
-            <button type="button" className="location-search-btn"
-              onClick={() => dest.setQuery(destinationQuery)}
-              disabled={dest.isLoading || destinationQuery.trim().length < 2}>
-              {dest.isLoading ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
-            </button>
           </div>
-          {dest.error ? <p className="location-search-error">{dest.error}</p> : null}
-          {dest.suggestions.length > 0 ? (
-            <ul className="location-search-results">
-              {dest.suggestions.map((r) => (
+
+          {/* Destination Suggestions Floating Dropdown */}
+          {activeSearchField === "destination" && dest.suggestions.length > 0 ? (
+            <ul className="route-suggestions-dropdown">
+              {dest.suggestions.map((r, idx) => (
                 <li key={r.id}>
-                  <button type="button" onClick={() => selectDestination(r)}>
-                    <strong>📍 {r.name}</strong>
-                    <small>{r.fullName}</small>
+                  <button
+                    type="button"
+                    className={`route-suggestion-item ${dest.highlightedIndex === idx ? "is-highlighted" : ""}`}
+                    onClick={() => { void selectDestination(r); }}
+                  >
+                    <MapPin size={13} className="route-suggestion-icon route-suggestion-icon--dest" />
+                    <div className="route-suggestion-text">
+                      <strong>{r.name}</strong>
+                      <small>{r.fullName}</small>
+                    </div>
                   </button>
                 </li>
               ))}
             </ul>
           ) : null}
         </div>
+
+        {/* Input Errors */}
+        {origin$.error ? <p className="location-search-error">{origin$.error}</p> : null}
+        {dest.error ? <p className="location-search-error">{dest.error}</p> : null}
+        {routeInputError ? <p className="location-search-error">{routeInputError}</p> : null}
       </div>
 
       {/* ── Flood warning banners ───────────────────────── */}
@@ -614,9 +773,34 @@ export function SafeRoutePlanner({
           const blocked = routes.filter(
             (r) => (r.analysis?.routeHealth ?? 100) === 0 || r.analysis?.floodRisk === "EXTREME"
           );
+          const suggestedAlternate = available[0];
+          const blockedSorted = [...blocked].sort((a, b) => {
+            if (a.id === "osrm-0") return -1;
+            if (b.id === "osrm-0") return 1;
+            return 0;
+          });
 
           return (
             <div className="route-cards-list">
+              {isPrimaryRouteBlocked && primaryRoute ? (
+                <div className="route-primary-blocked-callout">
+                  <span className="route-primary-blocked-title">
+                    <Ban size={13} /> Fastest direct route is flooded/blocked
+                  </span>
+                  <span className="route-primary-blocked-meta">
+                    {primaryRoute.name} · {primaryRoute.distanceKm} km · {primaryRoute.estimatedMinutes} min
+                  </span>
+                  {suggestedAlternate ? (
+                    <button
+                      type="button"
+                      className="route-primary-alternate-btn"
+                      onClick={() => onRouteChange(suggestedAlternate)}
+                    >
+                      Suggested alternate: {suggestedAlternate.name} ({suggestedAlternate.estimatedMinutes} min)
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
               {/* ── Available routes ──────────────────────── */}
               {available.length > 0 ? (
@@ -641,7 +825,9 @@ export function SafeRoutePlanner({
                     <Ban size={13} />
                     {blocked.length} Blocked / Impassable Route{blocked.length > 1 ? "s" : ""}
                   </div>
-                  {blocked.map((option) => renderRouteCard(option, -1, true))}
+                  {blockedSorted.map((option) =>
+                    renderRouteCard(option, -1, true, option.id === "osrm-0")
+                  )}
                 </>
               ) : null}
 
