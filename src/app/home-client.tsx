@@ -168,30 +168,18 @@ export default function HomeClient() {
         setGpsLoading(false);
       },
       (err) => {
-        if (err.code !== err.PERMISSION_DENIED) {
-          // Fall back to low-accuracy network positioning if high-accuracy fails or times out
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              setUserLocation({ lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5) });
-              setGeoError(null);
-              setGpsLoading(false);
-            },
-            (lowErr) => {
-              setGpsLoading(false);
-              if (lowErr.code === lowErr.PERMISSION_DENIED) {
-                setGeoError("Location access denied. Please enable location permissions.");
-              } else {
-                setGeoError("GPS location unavailable. Set location manually on the map.");
-              }
-            },
-            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
-          );
-        } else {
-          setGpsLoading(false);
+        setGpsLoading(false);
+        if (err.code === err.PERMISSION_DENIED) {
           setGeoError("Location access denied. Please enable location permissions in browser settings.");
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          setGeoError("GPS signal unavailable. Try again outdoors or set location manually.");
+        } else if (err.code === err.TIMEOUT) {
+          setGeoError("GPS request timed out. Try again outdoors or set location manually.");
+        } else {
+          setGeoError("Unable to fetch GPS location.");
         }
       },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 8000 }
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
   }, []);
 
