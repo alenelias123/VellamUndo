@@ -138,7 +138,7 @@ export function ReportPanel({
 
   function requestGPS() {
     if (!navigator.geolocation) {
-      setGpsError("Geolocation not supported by this device.");
+      setGpsError("Geolocation requires a secure connection (HTTPS) or localhost.");
       return;
     }
     setGpsLoading(true);
@@ -156,10 +156,13 @@ export function ReportPanel({
         setGpsLoading(false);
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            setGpsError("Location access denied. Search a custom location below.");
+            setGpsError("Location access denied. Please enable location permissions in browser settings.");
             break;
           case error.POSITION_UNAVAILABLE:
-            setGpsError("GPS signal unavailable. Search a custom location below.");
+            setGpsError("GPS signal unavailable. Try again outdoors or set location manually.");
+            break;
+          case error.TIMEOUT:
+            setGpsError("GPS lock request timed out. Try again outdoors or set location manually.");
             break;
           default:
             setGpsError("GPS lock failed — tap the map or search a location below.");
