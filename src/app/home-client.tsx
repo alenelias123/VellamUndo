@@ -663,46 +663,31 @@ export default function HomeClient() {
               </div>
             </div>
 
-            {/* Combined Filters (Feature 9) */}
-            <div className="intel-section map-filters-section bg-slate-50 p-3 rounded-lg border border-slate-200 mb-3 text-xs flex flex-col gap-3">
-              <h4 className="font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
-                <SlidersHorizontal size={12} /> Combined Map Filters
+            {/* Redesigned Combined Filters (Feature 9) */}
+            <div className="intel-section map-filters-section bg-white/95 backdrop-blur-md p-4 rounded-xl border border-slate-200 shadow-md mb-3 text-xs flex flex-col gap-4">
+              <h4 className="font-bold text-slate-800 text-sm tracking-wide flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <SlidersHorizontal size={14} className="text-teal-600 animate-pulse" /> Combined Map Filters
               </h4>
               
               <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-1.5">Type:</span>
-                <div className="flex flex-col gap-1 max-h-24 overflow-y-auto pr-1">
-                  {Object.keys(incidentTypeMeta).map((type) => (
-                    <label key={type} className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={filterTypes.includes(type)}
-                        onChange={() => toggleFilterType(type)}
-                      />
-                      <span>{incidentTypeMeta[type as IncidentType]?.icon} {type}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-1.5">Severity:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.keys(severityColorMeta).map((sev) => {
-                    const active = filterSeverities.includes(sev);
+                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Hazard Type:</span>
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                  {Object.keys(incidentTypeMeta).map((type) => {
+                    const active = filterTypes.includes(type);
+                    const meta = incidentTypeMeta[type as IncidentType];
                     return (
                       <button
-                        key={sev}
+                        key={type}
                         type="button"
-                        className="px-2 py-0.5 rounded border text-[10px] font-semibold transition"
-                        style={{
-                          background: active ? severityColorMeta[sev as SeverityLevel].color : "white",
-                          color: active ? "white" : "#475569",
-                          borderColor: severityColorMeta[sev as SeverityLevel].color
-                        }}
-                        onClick={() => toggleFilterSeverity(sev)}
+                        onClick={() => toggleFilterType(type)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all duration-200 hover:scale-105 active:scale-95 ${
+                          active
+                            ? "bg-teal-700 text-white border-teal-700 shadow-sm"
+                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
                       >
-                        {severityColorMeta[sev as SeverityLevel].label}
+                        <span>{meta?.icon}</span>
+                        <span>{type}</span>
                       </button>
                     );
                   })}
@@ -710,20 +695,57 @@ export default function HomeClient() {
               </div>
 
               <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-1.5">Status:</span>
+                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Severity:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.keys(severityColorMeta).map((sev) => {
+                    const active = filterSeverities.includes(sev);
+                    const meta = severityColorMeta[sev as SeverityLevel];
+                    return (
+                      <button
+                        key={sev}
+                        type="button"
+                        className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all duration-200 hover:scale-105 active:scale-95 border ${
+                          active
+                            ? "text-white shadow-sm"
+                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
+                        style={{
+                          backgroundColor: active ? meta.color : undefined,
+                          borderColor: active ? meta.color : undefined,
+                        }}
+                        onClick={() => toggleFilterSeverity(sev)}
+                      >
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Status:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {["active", "receding", "resolved", "archived", "Needs Verification"].map((st) => {
                     const active = filterStatus.includes(st);
+                    let activeClass = "bg-slate-800 text-white border-slate-800";
+                    if (st === "Needs Verification") {
+                      activeClass = "bg-amber-600 text-white border-amber-600";
+                    } else if (st === "resolved") {
+                      activeClass = "bg-green-600 text-white border-green-600";
+                    } else if (st === "archived") {
+                      activeClass = "bg-slate-500 text-white border-slate-500";
+                    } else if (st === "receding") {
+                      activeClass = "bg-sky-600 text-white border-sky-600";
+                    }
                     return (
                       <button
                         key={st}
                         type="button"
-                        className="px-2 py-0.5 rounded border text-[10px] font-semibold transition"
-                        style={{
-                          background: active ? "#334155" : "white",
-                          color: active ? "white" : "#475569",
-                          borderColor: "#cbd5e1"
-                        }}
+                        className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all duration-200 hover:scale-105 active:scale-95 border ${
+                          active
+                            ? activeClass
+                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
                         onClick={() => toggleFilterStatus(st)}
                       >
                         {st}
