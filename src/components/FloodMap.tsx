@@ -40,6 +40,7 @@ type FloodMapProps = {
   isDrawingStretch?: boolean;
   stretchStart?: Coordinates;
   stretchEnd?: Coordinates;
+  stretchPath?: Coordinates[];
   onStretchChange?: (start: Coordinates, end: Coordinates) => void;
   onStretchPoint?: (point: Coordinates) => void;
   onSelectRoute?: (route: RouteOption) => void;
@@ -66,6 +67,7 @@ export function FloodMap({
   isDrawingStretch = false,
   stretchStart,
   stretchEnd,
+  stretchPath,
   onStretchChange,
   onStretchPoint,
   onSelectRoute,
@@ -358,63 +360,74 @@ export function FloodMap({
 
       {/* Render draggable stretch markers if drawing */}
       {isDrawingStretch && stretchStart ? (
-        <>
-          <Marker
-            position={toLatLng(stretchStart)}
-            draggable={Boolean(stretchEnd)}
-            eventHandlers={{
-              dragend: (e) => {
-                const latlng = e.target.getLatLng();
-                if (onStretchChange && stretchEnd) {
-                  onStretchChange(
-                    { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) },
-                    stretchEnd
-                  );
-                }
-              }
-            }}
-            icon={makeTextIcon("stretch-start", "S", "#ea580c")}
-            zIndexOffset={1000}
-          >
-            <Tooltip direction="top" permanent>
-              {stretchEnd ? "Start of Flood Stretch (Drag me)" : "Start of Flood Stretch — now click the end"}
-            </Tooltip>
-          </Marker>
-          {stretchEnd ? (
+        (() => {
+          const startPos = stretchPath?.[0] ?? stretchStart;
+          const endPos = stretchPath?.[stretchPath.length - 1] ?? stretchEnd;
+          const hasBoth = Boolean(startPos && endPos);
+          return (
             <>
               <Marker
-                position={toLatLng(stretchEnd)}
-                draggable={true}
+                position={toLatLng(startPos)}
+                draggable={hasBoth}
                 eventHandlers={{
                   dragend: (e) => {
                     const latlng = e.target.getLatLng();
-                    if (onStretchChange && stretchStart) {
+                    if (onStretchChange && stretchEnd) {
                       onStretchChange(
-                        stretchStart,
-                        { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) }
+                        { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) },
+                        stretchEnd
                       );
                     }
                   }
                 }}
-                icon={makeTextIcon("stretch-end", "E", "#ea580c")}
+                icon={makeTextIcon("stretch-start", "S", "#ea580c")}
                 zIndexOffset={1000}
               >
                 <Tooltip direction="top" permanent>
-                  End of Flood Stretch (Drag me)
+                  {stretchEnd ? "Start of Flood Stretch (Drag me)" : "Start of Flood Stretch — now click the end"}
                 </Tooltip>
               </Marker>
-              <Polyline
-                positions={[toLatLng(stretchStart), toLatLng(stretchEnd)]}
-                pathOptions={{
-                  color: "#ea580c",
-                  dashArray: "6, 6",
-                  weight: 5,
-                  opacity: 0.9
-                }}
-              />
+              {endPos ? (
+                <>
+                  <Marker
+                    position={toLatLng(endPos)}
+                    draggable={true}
+                    eventHandlers={{
+                      dragend: (e) => {
+                        const latlng = e.target.getLatLng();
+                        if (onStretchChange && stretchStart) {
+                          onStretchChange(
+                            stretchStart,
+                            { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) }
+                          );
+                        }
+                      }
+                    }}
+                    icon={makeTextIcon("stretch-end", "E", "#ea580c")}
+                    zIndexOffset={1000}
+                  >
+                    <Tooltip direction="top" permanent>
+                      End of Flood Stretch (Drag me)
+                    </Tooltip>
+                  </Marker>
+                  <Polyline
+                    positions={
+                      stretchPath && stretchPath.length > 1
+                        ? stretchPath.map(toLatLng)
+                        : [toLatLng(startPos), toLatLng(endPos)]
+                    }
+                    pathOptions={{
+                      color: "#ea580c",
+                      dashArray: "6, 6",
+                      weight: 5,
+                      opacity: 0.9
+                    }}
+                  />
+                </>
+              ) : null}
             </>
-          ) : null}
-        </>
+          );
+        })()
       ) : null}
 
       {/* Render incident markers and their stretches */}
@@ -429,15 +442,23 @@ export function FloodMap({
           );
 
           const hasStretch = incident.floodStartLat && incident.floodStartLng && incident.floodEndLat && incident.floodEndLng;
+          const incidentPath =
+            hasStretch && incident.floodStretchPath && incident.floodStretchPath.length > 1
+              ? incident.floodStretchPath
+              : undefined;
 
           return (
             <React.Fragment key={incident.id}>
               {hasStretch && (
                 <Polyline
-                  positions={[
-                    [incident.floodStartLat!, incident.floodStartLng!],
-                    [incident.floodEndLat!, incident.floodEndLng!]
-                  ]}
+                  positions={
+                    incidentPath
+                      ? incidentPath.map(toLatLng)
+                      : [
+                          [incident.floodStartLat!, incident.floodStartLng!],
+                          [incident.floodEndLat!, incident.floodEndLng!]
+                        ]
+                  }
                   pathOptions={{
                     color: sevMeta.color,
                     weight: isSelected ? 6 : 4,

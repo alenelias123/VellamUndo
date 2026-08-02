@@ -18,7 +18,8 @@ import type {
   AnalyticsSnapshot,
   SeverityLevel,
   IncidentType,
-  VerificationVote
+  VerificationVote,
+  Coordinates
 } from "@/lib/types";
 
 // Convert demo flood reports to incidents for fallback/mock mode
@@ -79,6 +80,7 @@ export type OfflineReportPayload = {
   floodStartLng?: number;
   floodEndLat?: number;
   floodEndLng?: number;
+  floodStretchPath?: Coordinates[];
 };
 
 export function useEmergencyStore() {
@@ -309,6 +311,7 @@ export function useEmergencyStore() {
         floodStartLng: input.floodStartLng,
         floodEndLat: input.floodEndLat,
         floodEndLng: input.floodEndLng,
+        floodStretchPath: input.floodStretchPath,
         confidence: 30, // low confidence for offline temp items
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

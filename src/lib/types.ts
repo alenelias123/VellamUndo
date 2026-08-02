@@ -69,6 +69,7 @@ export type Incident = {
   floodEndLat?: number;
   floodEndLng?: number;
   auditLogs?: AuditLog[];
+  floodStretchPath?: Coordinates[];
 };
 
 // Child User Report Entity

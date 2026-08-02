@@ -34,6 +34,7 @@ type OfflineReportPayload = {
   floodStartLng?: number;
   floodEndLat?: number;
   floodEndLng?: number;
+  floodStretchPath?: Coordinates[];
 };
 
 type ReportPanelProps = {
@@ -44,6 +45,9 @@ type ReportPanelProps = {
   isDrawingStretch?: boolean;
   stretchStart?: Coordinates;
   stretchEnd?: Coordinates;
+  stretchPath?: Coordinates[];
+  stretchPathKm?: number;
+  isResolvingStretch?: boolean;
   onToggleStretchDrawing?: (active: boolean) => void;
   onStretchChange?: (start: Coordinates, end: Coordinates) => void;
   onStretchReset?: () => void;
@@ -60,6 +64,9 @@ export function ReportPanel({
   isDrawingStretch = false,
   stretchStart,
   stretchEnd,
+  stretchPath,
+  stretchPathKm,
+  isResolvingStretch = false,
   onToggleStretchDrawing,
   onStretchChange,
   onStretchReset
@@ -238,7 +245,8 @@ export function ReportPanel({
       floodStartLat: stretchStart?.lat,
       floodStartLng: stretchStart?.lng,
       floodEndLat: stretchEnd?.lat,
-      floodEndLng: stretchEnd?.lng
+      floodEndLng: stretchEnd?.lng,
+      floodStretchPath: stretchPath
     };
 
     try {
@@ -423,8 +431,13 @@ export function ReportPanel({
 
             {stretchStart && stretchEnd ? (
               <div className="stretch-status-row">
-                <span className="stretch-status-chip">
-                  🌊 {haversineDistanceKm(stretchStart, stretchEnd).toFixed(2)} km flooded
+                <span className={`stretch-status-chip${isResolvingStretch ? " stretch-status-chip--muted" : ""}`}>
+                  {isResolvingStretch
+                    ? "Calculating road path…"
+                    : `🌊 ${(
+                        stretchPathKm ??
+                        haversineDistanceKm(stretchStart, stretchEnd)
+                      ).toFixed(2)} km flooded`}
                 </span>
                 <span className="stretch-status-coords">
                   ({stretchStart.lat.toFixed(4)}, {stretchStart.lng.toFixed(4)}) → (

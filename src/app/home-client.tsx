@@ -24,7 +24,7 @@ import { useEmergencyStore } from "@/hooks/useEmergencyStore";
 import { useAuth } from "@/hooks/useAuth";
 import { severityRank, severityColorMeta, incidentTypeMeta, formatRelativeTime } from "@/lib/floodReports";
 import type { Coordinates, RouteOption, Incident, SeverityLevel, IncidentType } from "@/lib/types";
-import type { SearchResultPlace } from "@/lib/routing";
+import { fetchRoadPath, type SearchResultPlace } from "@/lib/routing";
 
 const FloodMap = dynamic(
   () => import("@/components/FloodMap").then((mod) => mod.FloodMap),
@@ -108,7 +108,32 @@ export default function HomeClient() {
   const [isDrawingStretch, setIsDrawingStretch] = useState(false);
   const [stretchStart, setStretchStart] = useState<Coordinates | undefined>();
   const [stretchEnd, setStretchEnd] = useState<Coordinates | undefined>();
+  const [stretchPath, setStretchPath] = useState<Coordinates[] | undefined>();
+  const [stretchPathKm, setStretchPathKm] = useState<number | undefined>();
+  const [isResolvingStretch, setIsResolvingStretch] = useState(false);
   const watchIdRef = useRef<number | null>(null);
+  const stretchReqRef = useRef(0);
+
+  // Resolve the road path along the drawn stretch so the flooded length
+  // follows the road geometry instead of a straight line between markers.
+  useEffect(() => {
+    const reqId = ++stretchReqRef.current;
+    if (!stretchStart || !stretchEnd) {
+      setStretchPath(undefined);
+      setStretchPathKm(undefined);
+      setIsResolvingStretch(false);
+      return;
+    }
+    setIsResolvingStretch(true);
+    const timeout = setTimeout(async () => {
+      const path = await fetchRoadPath(stretchStart, stretchEnd);
+      if (stretchReqRef.current !== reqId) return;
+      setStretchPath(path?.coordinates);
+      setStretchPathKm(path?.distanceKm);
+      setIsResolvingStretch(false);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [stretchStart, stretchEnd]);
 
   // Filters (District, Combined map filters, Global Search)
   const [selectedDistrict, setSelectedDistrict] = useState<string>("all");
@@ -506,6 +531,7 @@ export default function HomeClient() {
               stretchEnd={stretchEnd}
               onStretchChange={handleStretchChange}
               onStretchPoint={handleStretchPoint}
+              stretchPath={stretchPath}
             />
           </div>
 
@@ -715,6 +741,9 @@ export default function HomeClient() {
                     setStretchEnd(undefined);
                     setIsDrawingStretch(false);
                   }}
+                  stretchPath={stretchPath}
+                  stretchPathKm={stretchPathKm}
+                  isResolvingStretch={isResolvingStretch}
                 />
               )}
               {activePanel === "route" && (
