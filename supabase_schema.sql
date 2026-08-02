@@ -29,13 +29,6 @@ alter table public.incidents add column if not exists last_verified_at timestamp
 alter table public.incidents add column if not exists last_report_at timestamptz;
 alter table public.incidents add column if not exists archived_at timestamptz;
 alter table public.incidents add column if not exists needs_verification boolean default false;
-alter table public.incidents add column if not exists original_lat double precision;
-alter table public.incidents add column if not exists original_lng double precision;
-alter table public.incidents add column if not exists snapped_lat double precision;
-alter table public.incidents add column if not exists snapped_lng double precision;
-alter table public.incidents add column if not exists road_snap_distance double precision;
-alter table public.incidents add column if not exists location_confidence integer;
-alter table public.incidents add column if not exists resolved_road_name text;
 
 -- Create incident_reports table
 create table if not exists public.incident_reports (

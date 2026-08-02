@@ -335,14 +335,7 @@ export async function GET() {
         archivedAt: db.archived_at || undefined,
         needsVerification: db.needs_verification || false,
         auditLogs,
-        floodStretchPath,
-        originalLatitude: db.original_lat || undefined,
-        originalLongitude: db.original_lng || undefined,
-        snappedLatitude: db.snapped_lat || undefined,
-        snappedLongitude: db.snapped_lng || undefined,
-        roadSnapDistance: db.road_snap_distance || undefined,
-        locationConfidence: db.location_confidence || undefined,
-        resolvedRoadName: db.resolved_road_name || undefined
+        floodStretchPath
       };
     });
 
@@ -376,14 +369,7 @@ export async function POST(request: Request) {
       floodStartLng,
       floodEndLat,
       floodEndLng,
-      floodStretchPath,
-      originalLatitude,
-      originalLongitude,
-      snappedLatitude,
-      snappedLongitude,
-      roadSnapDistance,
-      locationConfidence,
-      resolvedRoadName
+      floodStretchPath
     } = body;
 
     if (!latitude || !longitude || !severity || !type || !roadName || !landmark || !district) {
@@ -453,13 +439,6 @@ export async function POST(request: Request) {
       if (floodEndLat !== undefined) insertRow.flood_end_lat = floodEndLat;
       if (floodEndLng !== undefined) insertRow.flood_end_lng = floodEndLng;
       if (floodStretchPath !== undefined) insertRow.flood_path = floodStretchPath;
-      if (originalLatitude !== undefined) insertRow.original_lat = originalLatitude;
-      if (originalLongitude !== undefined) insertRow.original_lng = originalLongitude;
-      if (snappedLatitude !== undefined) insertRow.snapped_lat = snappedLatitude;
-      if (snappedLongitude !== undefined) insertRow.snapped_lng = snappedLongitude;
-      if (roadSnapDistance !== undefined) insertRow.road_snap_distance = roadSnapDistance;
-      if (locationConfidence !== undefined) insertRow.location_confidence = locationConfidence;
-      if (resolvedRoadName !== undefined) insertRow.resolved_road_name = resolvedRoadName;
 
       let { data: newInc, error: errNewInc } = await supabase
         .from("incidents")
@@ -475,13 +454,6 @@ export async function POST(request: Request) {
         delete fallbackRow.flood_end_lat;
         delete fallbackRow.flood_end_lng;
         delete fallbackRow.flood_path;
-        delete fallbackRow.original_lat;
-        delete fallbackRow.original_lng;
-        delete fallbackRow.snapped_lat;
-        delete fallbackRow.snapped_lng;
-        delete fallbackRow.road_snap_distance;
-        delete fallbackRow.location_confidence;
-        delete fallbackRow.resolved_road_name;
         if (elevationMeters !== undefined) fallbackRow.landmark = `${fallbackRow.landmark || ""} [ELEV:${elevationMeters}]`;
         if (floodStartLat && floodStartLng && floodEndLat && floodEndLng) {
           fallbackRow.landmark = `${fallbackRow.landmark || ""} [STRETCH:${floodStartLat},${floodStartLng};${floodEndLat},${floodEndLng}]`;
