@@ -709,10 +709,10 @@ export default function HomeClient() {
                             ? "text-white shadow-sm"
                             : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                         }`}
-                        style={{
-                          backgroundColor: active ? meta.color : undefined,
-                          borderColor: active ? meta.color : undefined,
-                        }}
+                        style={active ? {
+                          backgroundColor: meta.color,
+                          borderColor: meta.color,
+                        } : {}}
                         onClick={() => toggleFilterSeverity(sev)}
                       >
                         {meta.label}

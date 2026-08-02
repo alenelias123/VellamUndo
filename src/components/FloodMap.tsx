@@ -79,6 +79,7 @@ export function FloodMap({
   onPickLocation
 }: FloodMapProps) {
   const [mounted, setMounted] = useState(false);
+  const [mapKey] = useState(() => `vu-map-${Math.random()}`);
 
   useEffect(() => {
     setMounted(true);
@@ -94,6 +95,7 @@ export function FloodMap({
 
   return (
     <MapContainer
+      key={mapKey}
       center={[center.lat, center.lng]}
       zoom={11}
       scrollWheelZoom
