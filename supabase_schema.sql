@@ -13,20 +13,22 @@ create table if not exists public.incidents (
   latitude double precision not null,
   longitude double precision not null,
   confidence integer default 0 check (confidence between 0 and 100),
-  elevation_meters double precision,
-  flood_start_lat double precision,
-  flood_start_lng double precision,
-  flood_end_lat double precision,
-  flood_end_lng double precision,
-  flood_path jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
-  resolved_at timestamptz,
-  last_verified_at timestamptz,
-  last_report_at timestamptz,
-  archived_at timestamptz,
-  needs_verification boolean default false
+  resolved_at timestamptz
 );
+
+-- Safely append new columns if table already exists in cloud
+alter table public.incidents add column if not exists elevation_meters double precision;
+alter table public.incidents add column if not exists flood_start_lat double precision;
+alter table public.incidents add column if not exists flood_start_lng double precision;
+alter table public.incidents add column if not exists flood_end_lat double precision;
+alter table public.incidents add column if not exists flood_end_lng double precision;
+alter table public.incidents add column if not exists flood_path jsonb;
+alter table public.incidents add column if not exists last_verified_at timestamptz;
+alter table public.incidents add column if not exists last_report_at timestamptz;
+alter table public.incidents add column if not exists archived_at timestamptz;
+alter table public.incidents add column if not exists needs_verification boolean default false;
 
 -- Create incident_reports table
 create table if not exists public.incident_reports (
@@ -35,13 +37,15 @@ create table if not exists public.incident_reports (
   severity text not null check (severity in ('SAFE', 'WATERLOGGED', 'KNEE_DEEP', 'WAIST_DEEP', 'NOT_PASSABLE')),
   notes text,
   reporter text default 'Community reporter',
-  created_at timestamptz default now(),
-  ownership_token text,
-  is_guest_report boolean default false,
-  reporter_id text,
-  updated_at timestamptz default now(),
-  deleted_at timestamptz
+  created_at timestamptz default now()
 );
+
+-- Safely append new columns if table already exists in cloud
+alter table public.incident_reports add column if not exists ownership_token text;
+alter table public.incident_reports add column if not exists is_guest_report boolean default false;
+alter table public.incident_reports add column if not exists reporter_id text;
+alter table public.incident_reports add column if not exists updated_at timestamptz default now();
+alter table public.incident_reports add column if not exists deleted_at timestamptz;
 
 -- Create incident_images table
 create table if not exists public.incident_images (
@@ -88,20 +92,42 @@ alter table public.incident_images enable row level security;
 alter table public.incident_verifications enable row level security;
 alter table public.audit_logs enable row level security;
 
--- Policies for public read
+-- Policies for public read (with drops to prevent duplication errors)
+drop policy if exists "Allow public read access for incidents" on public.incidents;
 create policy "Allow public read access for incidents" on public.incidents for select using (true);
+
+drop policy if exists "Allow public read access for reports" on public.incident_reports;
 create policy "Allow public read access for reports" on public.incident_reports for select using (true);
+
+drop policy if exists "Allow public read access for images" on public.incident_images;
 create policy "Allow public read access for images" on public.incident_images for select using (true);
+
+drop policy if exists "Allow public read access for verifications" on public.incident_verifications;
 create policy "Allow public read access for verifications" on public.incident_verifications for select using (true);
+
+drop policy if exists "Allow public read access for audit_logs" on public.audit_logs;
 create policy "Allow public read access for audit_logs" on public.audit_logs for select using (true);
 
 -- Policies for insert and updates (allowing all for public/anonymous MVP writes)
+drop policy if exists "Allow public insert for incidents" on public.incidents;
 create policy "Allow public insert for incidents" on public.incidents for insert with check (true);
+
+drop policy if exists "Allow public update for incidents" on public.incidents;
 create policy "Allow public update for incidents" on public.incidents for update using (true);
+
+drop policy if exists "Allow public insert for reports" on public.incident_reports;
 create policy "Allow public insert for reports" on public.incident_reports for insert with check (true);
+
+drop policy if exists "Allow public update for reports" on public.incident_reports;
 create policy "Allow public update for reports" on public.incident_reports for update using (true);
+
+drop policy if exists "Allow public insert for images" on public.incident_images;
 create policy "Allow public insert for images" on public.incident_images for insert with check (true);
+
+drop policy if exists "Allow public insert for verifications" on public.incident_verifications;
 create policy "Allow public insert for verifications" on public.incident_verifications for insert with check (true);
+
+drop policy if exists "Allow public insert for audit_logs" on public.audit_logs;
 create policy "Allow public insert for audit_logs" on public.audit_logs for insert with check (true);
 
 -- Grant usage on public schema to PostgREST roles
