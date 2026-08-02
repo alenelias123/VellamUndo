@@ -18,6 +18,7 @@ create table if not exists public.incidents (
   flood_start_lng double precision,
   flood_end_lat double precision,
   flood_end_lng double precision,
+  flood_path jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   resolved_at timestamptz

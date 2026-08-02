@@ -63,7 +63,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       floodStartLat,
       floodStartLng,
       floodEndLat,
-      floodEndLng
+      floodEndLng,
+      floodStretchPath
     } = body;
 
     // Build update payload mapping JS camelCase to Postgres snake_case
@@ -84,6 +85,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (floodStartLng !== undefined) updatePayload.flood_start_lng = floodStartLng;
     if (floodEndLat !== undefined) updatePayload.flood_end_lat = floodEndLat;
     if (floodEndLng !== undefined) updatePayload.flood_end_lng = floodEndLng;
+    if (floodStretchPath !== undefined) updatePayload.flood_path = floodStretchPath;
 
     updatePayload.updated_at = new Date().toISOString();
 
@@ -103,6 +105,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         delete fallbackPayload.flood_start_lng;
         delete fallbackPayload.flood_end_lat;
         delete fallbackPayload.flood_end_lng;
+        delete fallbackPayload.flood_path;
         
         // Save the stretch details inside landmark as a JSON-encoded string to maintain feature parity
         if (elevationMeters !== undefined) {
@@ -110,6 +113,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         }
         if (floodStartLat && floodStartLng && floodEndLat && floodEndLng) {
           fallbackPayload.landmark = `${fallbackPayload.landmark || ""} [STRETCH:${floodStartLat},${floodStartLng};${floodEndLat},${floodEndLng}]`;
+        }
+        if (Array.isArray(floodStretchPath) && floodStretchPath.length > 1) {
+          const encoded = floodStretchPath.map((c: { lat: number; lng: number }) => `${c.lat},${c.lng}`).join(";");
+          fallbackPayload.landmark = `${fallbackPayload.landmark || ""} [PATH:${encoded}]`;
         }
 
         const { data: fbData, error: fbError } = await supabase

@@ -20,6 +20,7 @@ import { AuthModal } from "@/components/AuthModal";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
 import { useAuth } from "@/hooks/useAuth";
 import { severityRank, severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
+import { fetchRoadPath } from "@/lib/routing";
 import type { Coordinates, RouteOption } from "@/lib/types";
 
 const FloodMap = dynamic(
@@ -80,7 +81,32 @@ export default function HomeClient() {
   const [isDrawingStretch, setIsDrawingStretch] = useState(false);
   const [stretchStart, setStretchStart] = useState<Coordinates | undefined>();
   const [stretchEnd, setStretchEnd] = useState<Coordinates | undefined>();
+  const [stretchPath, setStretchPath] = useState<Coordinates[] | undefined>();
+  const [stretchPathKm, setStretchPathKm] = useState<number | undefined>();
+  const [isResolvingStretch, setIsResolvingStretch] = useState(false);
   const watchIdRef = useRef<number | null>(null);
+  const stretchReqRef = useRef(0);
+
+  // Resolve the road path along the drawn stretch so the flooded length
+  // follows the road geometry instead of a straight line between markers.
+  useEffect(() => {
+    const reqId = ++stretchReqRef.current;
+    if (!stretchStart || !stretchEnd) {
+      setStretchPath(undefined);
+      setStretchPathKm(undefined);
+      setIsResolvingStretch(false);
+      return;
+    }
+    setIsResolvingStretch(true);
+    const timeout = setTimeout(async () => {
+      const path = await fetchRoadPath(stretchStart, stretchEnd);
+      if (stretchReqRef.current !== reqId) return;
+      setStretchPath(path?.coordinates);
+      setStretchPathKm(path?.distanceKm);
+      setIsResolvingStretch(false);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [stretchStart, stretchEnd]);
 
   // ── GPS ────────────────────────────────────────────────────────────
   const startGpsWatch = useCallback(() => {
@@ -320,6 +346,7 @@ export default function HomeClient() {
               stretchEnd={stretchEnd}
               onStretchChange={handleStretchChange}
               onStretchPoint={handleStretchPoint}
+              stretchPath={stretchPath}
             />
           </div>
 
@@ -412,6 +439,9 @@ export default function HomeClient() {
                     setStretchEnd(undefined);
                     setIsDrawingStretch(false);
                   }}
+                  stretchPath={stretchPath}
+                  stretchPathKm={stretchPathKm}
+                  isResolvingStretch={isResolvingStretch}
                 />
               )}
               {activePanel === "route" && (

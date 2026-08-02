@@ -83,6 +83,24 @@ function osrmRouteToCoords(route: any): Coordinates[] {
   return route.geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng }));
 }
 
+/**
+ * Fetch the exact road path between two points so a flooded stretch follows
+ * the road geometry instead of a straight line. Returns null on failure.
+ */
+export async function fetchRoadPath(
+  start: Coordinates,
+  end: Coordinates
+): Promise<{ coordinates: Coordinates[]; distanceKm: number } | null> {
+  const result = await fetchOsrmRoute([start, end]);
+  const route = result?.routes?.[0];
+  if (!route) return null;
+  const coordinates = osrmRouteToCoords(route);
+  return {
+    coordinates,
+    distanceKm: Number((route.distance / 1000).toFixed(2))
+  };
+}
+
 // ── Detour waypoint generation ────────────────────────────────────────────────
 /**
  * Returns two waypoint candidates on either side of the origin→destination

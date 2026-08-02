@@ -3814,6 +3814,13 @@ label {
   font-weight: 900;
 }
 
+.stretch-status-chip--muted {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
+  font-weight: 700;
+}
+
 .stretch-status-coords {
   font-size: 0.68rem;
   color: var(--muted);
