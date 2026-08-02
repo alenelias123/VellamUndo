@@ -128,6 +128,7 @@ export function SafeRoutePlanner({
       } else if (destination.id !== selectedDestination?.id) {
         setSelectedDestination(destination);
         dest.setQuery(destination.name);
+        if (!origin) return;
         setIsCalculating(true);
         calculateRoadRoutes(origin, destination.coordinates, incidents)
           .then((computedRoutes) => {

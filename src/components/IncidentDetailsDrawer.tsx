@@ -15,7 +15,6 @@ import {
   Users,
   X,
   Edit,
-  Trash2,
   AlertTriangle,
   HelpCircle,
   Clock3
