@@ -138,7 +138,11 @@ export async function GET() {
       .neq("status", "archived");
 
     const now = new Date();
-    if (activeIncidents) {
+    if (activeIncidents && activeIncidents.length > 0) {
+      const toArchiveIds: string[] = [];
+      const toVerifyIds: string[] = [];
+      const auditLogsToInsert: any[] = [];
+
       for (const inc of activeIncidents) {
         const dates = [
           new Date(inc.created_at),
@@ -150,42 +154,61 @@ export async function GET() {
         const elapsedHours = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60);
 
         if (elapsedHours >= 48) {
-          // Auto-archive
-          await supabase
+          toArchiveIds.push(inc.id);
+          auditLogsToInsert.push({
+            incident_id: inc.id,
+            user_id: "System (Auto-Archive)",
+            action: "Archive",
+            target_table: "incidents",
+            target_id: inc.id,
+            previous_value: { status: inc.status },
+            new_value: { status: "archived" }
+          });
+        } else if (elapsedHours >= 24 && !inc.needs_verification) {
+          toVerifyIds.push(inc.id);
+          auditLogsToInsert.push({
+            incident_id: inc.id,
+            user_id: "System (Auto-Archive)",
+            action: "Update",
+            target_table: "incidents",
+            target_id: inc.id,
+            previous_value: { needs_verification: false },
+            new_value: { needs_verification: true }
+          });
+        }
+      }
+
+      // Execute batch updates & inserts in parallel
+      const dbPromises: any[] = [];
+
+      if (toArchiveIds.length > 0) {
+        dbPromises.push(
+          supabase
             .from("incidents")
             .update({ status: "archived", archived_at: now.toISOString(), needs_verification: false })
-            .eq("id", inc.id);
+            .in("id", toArchiveIds)
+        );
+      }
 
-          await supabase
-            .from("audit_logs")
-            .insert([{
-              incident_id: inc.id,
-              user_id: "System (Auto-Archive)",
-              action: "Archive",
-              target_table: "incidents",
-              target_id: inc.id,
-              previous_value: { status: inc.status },
-              new_value: { status: "archived" }
-            }]);
-        } else if (elapsedHours >= 24 && !inc.needs_verification) {
-          // Mark needs verification
-          await supabase
+      if (toVerifyIds.length > 0) {
+        dbPromises.push(
+          supabase
             .from("incidents")
             .update({ needs_verification: true })
-            .eq("id", inc.id);
+            .in("id", toVerifyIds)
+        );
+      }
 
-          await supabase
+      if (auditLogsToInsert.length > 0) {
+        dbPromises.push(
+          supabase
             .from("audit_logs")
-            .insert([{
-              incident_id: inc.id,
-              user_id: "System (Auto-Archive)",
-              action: "Update",
-              target_table: "incidents",
-              target_id: inc.id,
-              previous_value: { needs_verification: false },
-              new_value: { needs_verification: true }
-            }]);
-        }
+            .insert(auditLogsToInsert)
+        );
+      }
+
+      if (dbPromises.length > 0) {
+        await Promise.all(dbPromises);
       }
     }
 
