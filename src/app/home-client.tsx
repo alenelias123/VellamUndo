@@ -168,21 +168,30 @@ export default function HomeClient() {
         setGpsLoading(false);
       },
       (err) => {
-        setGpsLoading(false);
-        if (err.code === err.PERMISSION_DENIED)
-          setGeoError("Location access denied. Set location manually.");
-        else if (err.code === err.POSITION_UNAVAILABLE)
-          setGeoError("GPS unavailable. Move outdoors or set location manually.");
-        else if (err.code === err.TIMEOUT) {
-          setGeoError("GPS timed out. Retrying with low accuracy…");
+        if (err.code !== err.PERMISSION_DENIED) {
+          // Fall back to low-accuracy network positioning if high-accuracy fails or times out
           navigator.geolocation.getCurrentPosition(
-            (p) => { setUserLocation({ lat: +p.coords.latitude.toFixed(5), lng: +p.coords.longitude.toFixed(5) }); setGeoError(null); },
-            () => setGeoError("Could not get location. Set manually on map."),
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+            (pos) => {
+              setUserLocation({ lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5) });
+              setGeoError(null);
+              setGpsLoading(false);
+            },
+            (lowErr) => {
+              setGpsLoading(false);
+              if (lowErr.code === lowErr.PERMISSION_DENIED) {
+                setGeoError("Location access denied. Please enable location permissions.");
+              } else {
+                setGeoError("GPS location unavailable. Set location manually on the map.");
+              }
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
           );
-        } else setGeoError("Unable to fetch GPS location.");
+        } else {
+          setGpsLoading(false);
+          setGeoError("Location access denied. Please enable location permissions in browser settings.");
+        }
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 8000 }
     );
   }, []);
 
