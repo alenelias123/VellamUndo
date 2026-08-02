@@ -75,6 +75,103 @@ const channel = supabase
   .on("postgres_changes", { event: "*", schema: "public", table: "incident_reports" }, fetchIncidents)
   .on("postgres_changes", { event: "*", schema: "public", table: "incident_verifications" }, fetchIncidents)
   .on("postgres_changes", { event: "*", schema: "public", table: "incident_images" }, fetchIncidents)
-  .subscribe();
+.subscribe();
 ```
 *Whenever another client submits a report or verification vote, your browser receives the event and instantly updates the route plans and map markers.*
+
+---
+
+## 5. Future Extension: How to Build New Supabase-Backed Services
+
+When creating new features (e.g. a "Relief Centers Booking System" or "Volunteer Coordination Panel"), follow this end-to-end checklist:
+
+### Step 1: Create the PostgreSQL Migration
+1.  Generate a new local migration file using the Supabase CLI:
+    ```bash
+    npx supabase migration new add_my_new_service_table
+    ```
+2.  Open the newly created `.sql` file in `supabase/migrations/` and write your schema:
+    ```sql
+    -- 1. Create your table
+    create table public.volunteer_assignments (
+      id uuid primary key default gen_random_uuid(),
+      name text not null,
+      phone text not null,
+      status text not null default 'pending',
+      created_at timestamptz default now()
+    );
+
+    -- 2. Enable Row Level Security (RLS)
+    alter table public.volunteer_assignments enable row level security;
+
+    -- 3. Create RLS Policies
+    create policy "Allow public reads" on public.volunteer_assignments for select using (true);
+    create policy "Allow public inserts" on public.volunteer_assignments for insert with check (true);
+
+    -- 4. Grant postgREST permissions (Crucial! Avoids "permission denied" error)
+    grant usage on schema public to anon, authenticated;
+    grant select, insert, update, delete on public.volunteer_assignments to anon, authenticated;
+    grant all on all sequences in schema public to anon, authenticated;
+    ```
+
+### Step 2: Apply Schema Locally
+Reset your local PostgreSQL instance to execute the new migrations:
+```bash
+npm run db:reset
+```
+
+### Step 3: Define TypeScript Types
+Open [types.ts](file:///c:/Users/amith/vellam.undo/vellom.undo.repo/VellamUndo/src/lib/types.ts) and add the interface matching your database structure:
+```typescript
+export interface VolunteerAssignment {
+  id: string;
+  name: string;
+  phone: string;
+  status: 'pending' | 'active' | 'completed';
+  createdAt: string;
+}
+```
+
+### Step 4: Write Next.js API Routes
+Create a new Next.js route handler in `src/app/api/volunteers/route.ts`:
+```typescript
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function GET() {
+  if (!supabase) {
+    // Return mock fallback data if Supabase URL/key isn't configured
+    return NextResponse.json({ volunteers: [] });
+  }
+
+  const { data, error } = await supabase
+    .from("volunteer_assignments")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ volunteers: data });
+}
+```
+
+### Step 5: Listen to Realtime Events (Optional)
+If your new UI component needs to receive instant updates when other users write to your new table, add a listener in your React hooks:
+```typescript
+useEffect(() => {
+  if (!supabase) return;
+
+  const channel = supabase
+    .channel("realtime-volunteers-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "volunteer_assignments" }, fetchVolunteers)
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+}, []);
+```
+
+### Step 6: Deploy Changes to Cloud Production
+Once verified locally, push your new table schema, indexes, and policy permissions directly to your cloud project:
+```bash
+npx supabase db push
+```
+
