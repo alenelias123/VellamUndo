@@ -81,6 +81,13 @@ export type OfflineReportPayload = {
   floodEndLat?: number;
   floodEndLng?: number;
   floodStretchPath?: Coordinates[];
+  originalLatitude?: number;
+  originalLongitude?: number;
+  snappedLatitude?: number;
+  snappedLongitude?: number;
+  roadSnapDistance?: number;
+  locationConfidence?: number;
+  resolvedRoadName?: string;
 };
 
 export function useEmergencyStore() {

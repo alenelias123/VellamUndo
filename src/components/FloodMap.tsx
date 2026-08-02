@@ -548,9 +548,19 @@ export function FloodMap({
         <Marker
           position={toLatLng(pendingLocation)}
           icon={makeTextIcon("pending", "+", "#111827")}
+          draggable={true}
+          eventHandlers={{
+            dragend: (e) => {
+              const marker = e.target;
+              if (marker != null) {
+                const latLng = marker.getLatLng();
+                onPickLocation({ lat: latLng.lat, lng: latLng.lng });
+              }
+            }
+          }}
         >
           <Tooltip direction="top" permanent>
-            Selected Location
+            Selected Location (Drag to adjust)
           </Tooltip>
         </Marker>
       ) : null}

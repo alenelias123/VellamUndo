@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Camera,
+  CheckCircle,
   CheckCircle2,
   Loader2,
   MapPin,
@@ -35,6 +37,13 @@ type OfflineReportPayload = {
   floodEndLat?: number;
   floodEndLng?: number;
   floodStretchPath?: Coordinates[];
+  originalLatitude?: number;
+  originalLongitude?: number;
+  snappedLatitude?: number;
+  snappedLongitude?: number;
+  roadSnapDistance?: number;
+  locationConfidence?: number;
+  resolvedRoadName?: string;
 };
 
 type ReportPanelProps = {
@@ -93,6 +102,29 @@ export function ReportPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
+  // ── GPS Snapping & Location Resolution (Step 1-12) ───────────────────
+  const [geocodeCache] = useState(() => new Map<string, any>());
+  const [nearestCache] = useState(() => new Map<string, any>());
+
+  const [originalCoords, setOriginalCoords] = useState<Coordinates | null>(null);
+  const [snappedCoords, setSnappedCoords] = useState<Coordinates | null>(null);
+  const [roadSnapDistance, setRoadSnapDistance] = useState<number | undefined>();
+  const [locationConfidence, setLocationConfidence] = useState<number>(100);
+  const [resolvedRoadName, setResolvedRoadName] = useState<string>("");
+
+  const [snapBanner, setSnapBanner] = useState<{
+    roadName: string;
+    distance: number;
+  } | null>(null);
+
+  const [distanceWarning, setDistanceWarning] = useState<{
+    distance: number;
+    tempCoords: Coordinates;
+    tempRoad: string;
+  } | null>(null);
+
+  const lastSnappedCoordsRef = useRef<Coordinates | null>(null);
+
   useEffect(() => {
     if (!pendingLocation) {
       requestGPS();
@@ -103,27 +135,157 @@ export function ReportPanel({
   useEffect(() => {
     if (!pendingLocation) return;
 
-    async function reverseGeocode() {
+    // Check if this pendingLocation is the one we just snapped to.
+    if (
+      lastSnappedCoordsRef.current &&
+      Math.abs(pendingLocation.lat - lastSnappedCoordsRef.current.lat) < 0.00001 &&
+      Math.abs(pendingLocation.lng - lastSnappedCoordsRef.current.lng) < 0.00001
+    ) {
+      return;
+    }
+
+    async function runPipeline() {
       setIsGeocoding(true);
+      setSnapBanner(null);
+      setDistanceWarning(null);
+
+      const lat = pendingLocation!.lat;
+      const lng = pendingLocation!.lng;
+      const cacheKey = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
+      let geocodeData = geocodeCache.get(cacheKey);
+
       try {
-        const res = await fetch(
-          `/api/geocode?lat=${pendingLocation?.lat}&lng=${pendingLocation?.lng}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setRoadName(data.roadName || "");
-          setLandmark(data.landmark || "");
-          setDistrict(data.district || "ernakulam");
+        // Step 1: Normal Reverse Geocoding
+        if (!geocodeData) {
+          const res = await fetch(`/api/geocode?lat=${lat}&lng=${lng}`);
+          if (res.ok) {
+            geocodeData = await res.json();
+            geocodeCache.set(cacheKey, geocodeData);
+          }
         }
+
+        const rawRoad = geocodeData?.roadName || "";
+        const isUnnamed = !rawRoad || rawRoad.toLowerCase() === "unnamed road" || rawRoad.toLowerCase() === "unknown road" || rawRoad.toLowerCase() === "unknown";
+
+        if (!isUnnamed) {
+          setRoadName(rawRoad);
+          setLandmark(geocodeData.landmark || "Kerala");
+          setDistrict(geocodeData.district || "ernakulam");
+          setLocationConfidence(100);
+          setOriginalCoords(pendingLocation!);
+          setSnappedCoords(null);
+          setRoadSnapDistance(undefined);
+          setResolvedRoadName(rawRoad);
+          setIsGeocoding(false);
+          return;
+        }
+
+        // Geocoding returned Unnamed Road/empty -> Proceed to Step 2: Road Snapping
+        let nearestData = nearestCache.get(cacheKey);
+        if (!nearestData) {
+          const nearestUrl = `https://router.project-osrm.org/nearest/v1/driving/${lng},${lat}?number=1`;
+          const nRes = await fetch(nearestUrl);
+          if (nRes.ok) {
+            nearestData = await nRes.json();
+            nearestCache.set(cacheKey, nearestData);
+          }
+        }
+
+        const waypoint = nearestData?.waypoints?.[0];
+        if (!waypoint || !waypoint.location) {
+          // Step 4: Smart Fallback using OSM highway around coordinates
+          let osmHighwayName = "";
+          try {
+            const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json][timeout:5];way(around:100,${lat},${lng})[highway];out;`;
+            const overpassRes = await fetch(overpassUrl);
+            if (overpassRes.ok) {
+              const opData = await overpassRes.json();
+              const way = opData?.elements?.[0];
+              if (way && way.tags && way.tags.name) {
+                osmHighwayName = way.tags.name;
+              }
+            }
+          } catch {}
+
+          const resolvedName = osmHighwayName || "Unknown Road";
+          setRoadName(resolvedName);
+          setLandmark(geocodeData?.landmark || "Kerala");
+          setDistrict(geocodeData?.district || "ernakulam");
+          setLocationConfidence(20);
+          setOriginalCoords(pendingLocation!);
+          setSnappedCoords(null);
+          setRoadSnapDistance(undefined);
+          setResolvedRoadName(resolvedName);
+          setIsGeocoding(false);
+          return;
+        }
+
+        const snappedLng = waypoint.location[0];
+        const snappedLat = waypoint.location[1];
+        const snappedName = waypoint.name || "Unnamed road";
+        const distanceMeters = Math.round(waypoint.distance);
+        const snappedCoordinates = { lat: snappedLat, lng: snappedLng };
+
+        setOriginalCoords(pendingLocation!);
+
+        // Step 3: Distance Validation
+        if (distanceMeters <= 50) {
+          // Auto snap!
+          lastSnappedCoordsRef.current = snappedCoordinates;
+          onPickLocation(snappedCoordinates);
+
+          setSnappedCoords(snappedCoordinates);
+          setRoadSnapDistance(distanceMeters);
+          setLocationConfidence(95);
+          setResolvedRoadName(snappedName);
+
+          const snappedCacheKey = `${snappedLat.toFixed(5)},${snappedLng.toFixed(5)}`;
+          let snappedGeocode = geocodeCache.get(snappedCacheKey);
+          if (!snappedGeocode) {
+            const sgRes = await fetch(`/api/geocode?lat=${snappedLat}&lng=${snappedLng}`);
+            if (sgRes.ok) {
+              snappedGeocode = await sgRes.json();
+              geocodeCache.set(snappedCacheKey, snappedGeocode);
+            }
+          }
+
+          setRoadName(snappedName);
+          setLandmark(snappedGeocode?.landmark || geocodeData?.landmark || "Kerala");
+          setDistrict(snappedGeocode?.district || geocodeData?.district || "ernakulam");
+
+          setSnapBanner({
+            roadName: snappedName,
+            distance: distanceMeters
+          });
+
+        } else {
+          // distance > 50 meters, show warning banner
+          setDistanceWarning({
+            distance: distanceMeters,
+            tempCoords: snappedCoordinates,
+            tempRoad: snappedName
+          });
+
+          setRoadName(rawRoad || "Unnamed road");
+          setLandmark(geocodeData?.landmark || "Kerala");
+          setDistrict(geocodeData?.district || "ernakulam");
+          setLocationConfidence(50);
+        }
+
       } catch (err) {
-        console.warn("Reverse geocode request failed:", err);
+        console.warn("Snapping pipeline failed:", err);
+        setRoadName(geocodeData?.roadName || "Unknown Road");
+        setLandmark(geocodeData?.landmark || "Kerala");
+        setDistrict(geocodeData?.district || "ernakulam");
+        setLocationConfidence(20);
       } finally {
         setIsGeocoding(false);
       }
     }
 
-    reverseGeocode();
-  }, [pendingLocation]);
+    runPipeline();
+  }, [pendingLocation, onPickLocation]);
 
   // Look up ground elevation for the report location so the router can
   // compare altitudes when scoring nearby routes (see src/lib/routing.ts).
@@ -249,7 +411,15 @@ export function ReportPanel({
       floodStartLng: stretchStart?.lng,
       floodEndLat: stretchEnd?.lat,
       floodEndLng: stretchEnd?.lng,
-      floodStretchPath: stretchPath
+      floodStretchPath: stretchPath,
+      // Snapping Metadata (Step 12)
+      originalLatitude: originalCoords?.lat || pendingLocation.lat,
+      originalLongitude: originalCoords?.lng || pendingLocation.lng,
+      snappedLatitude: snappedCoords?.lat || undefined,
+      snappedLongitude: snappedCoords?.lng || undefined,
+      roadSnapDistance: roadSnapDistance,
+      locationConfidence: locationConfidence,
+      resolvedRoadName: resolvedRoadName || roadName
     };
 
     try {
@@ -294,6 +464,122 @@ export function ReportPanel({
             {gpsError}
           </div>
         ) : null}
+
+        {/* ── Snapping Banner (Step 7) ───────────────────────── */}
+        {snapBanner && (
+          <div className="bg-teal-50 border border-teal-200 text-teal-800 p-3 rounded-lg flex flex-col gap-1.5 mb-4 animate-fadeIn">
+            <div className="flex items-center gap-1.5 font-bold text-xs">
+              <CheckCircle2 size={14} className="text-teal-600" />
+              Location adjusted to nearest road.
+            </div>
+            <div className="text-[11px] text-teal-700 flex justify-between items-center">
+              <span>Road: <strong>{snapBanner.roadName}</strong> ({snapBanner.distance} meters away)</span>
+              <div className="flex gap-2">
+                <button type="button" className="px-2 py-0.5 bg-teal-600 hover:bg-teal-700 text-white rounded font-bold text-[10px] transition active:scale-95" onClick={() => setSnapBanner(null)}>Accept</button>
+                <button type="button" className="px-2 py-0.5 bg-white border border-teal-300 text-teal-800 hover:bg-teal-50 rounded font-bold text-[10px] transition active:scale-95" onClick={() => { setSnapBanner(null); setLocationConfidence(50); }}>Move Pin</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Distance Warning (> 50m, Step 3) ───────────────── */}
+        {distanceWarning && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg flex flex-col gap-2 mb-4 animate-fadeIn">
+            <div className="flex items-center gap-1.5 font-bold text-xs">
+              <AlertTriangle size={14} className="text-amber-600" />
+              Nearest road is {distanceWarning.distance} meters away.
+            </div>
+            <p className="text-[10px] text-amber-700 leading-relaxed">
+              The location you selected is far from any known roads. Do you want to snap the marker to <strong>{distanceWarning.tempRoad}</strong>?
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold transition active:scale-95"
+                onClick={async () => {
+                  const { tempCoords, tempRoad, distance } = distanceWarning;
+                  lastSnappedCoordsRef.current = tempCoords;
+                  onPickLocation(tempCoords);
+                  setSnappedCoords(tempCoords);
+                  setRoadSnapDistance(distance);
+                  setLocationConfidence(80);
+                  setResolvedRoadName(tempRoad);
+                  
+                  try {
+                    const sgRes = await fetch(`/api/geocode?lat=${tempCoords.lat}&lng=${tempCoords.lng}`);
+                    if (sgRes.ok) {
+                      const sgData = await sgRes.json();
+                      setRoadName(tempRoad);
+                      setLandmark(sgData.landmark || "Kerala");
+                      setDistrict(sgData.district || "ernakulam");
+                    }
+                  } catch {}
+                  
+                  setSnapBanner({
+                    roadName: tempRoad,
+                    distance
+                  });
+                  setDistanceWarning(null);
+                }}
+              >
+                Use Nearest Road
+              </button>
+              <button
+                type="button"
+                className="px-2.5 py-1 bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 rounded text-[10px] font-bold transition active:scale-95"
+                onClick={() => {
+                  setDistanceWarning(null);
+                  setLocationConfidence(50);
+                }}
+              >
+                Move Pin (Manual)
+              </button>
+              <button
+                type="button"
+                className="px-2.5 py-1 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded text-[10px] font-bold transition active:scale-95"
+                onClick={() => {
+                  setDistanceWarning(null);
+                  setLocationConfidence(50);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Location Quality Score Widget (Step 6) ────────── */}
+        {pendingLocation && (
+          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-xs mb-4 flex items-center justify-between animate-fadeIn">
+            <div className="flex flex-col gap-0.5 pr-2">
+              <span className="font-semibold text-slate-700">Location Quality Score:</span>
+              <span className="text-[10px] text-slate-500 leading-snug">
+                {locationConfidence === 100 && "Exact matched road coordinate."}
+                {locationConfidence === 95 && "Automatically snapped to nearest road."}
+                {locationConfidence === 80 && "Manually snapped to nearest road."}
+                {locationConfidence === 50 && "Manual pin or road name adjustment."}
+                {locationConfidence === 20 && "Unknown road. Please verify manually."}
+              </span>
+            </div>
+            <div className="flex flex-col items-end gap-1 shrink-0">
+              <span className={`font-bold text-[11px] ${
+                locationConfidence >= 95 ? "text-green-600" :
+                locationConfidence >= 80 ? "text-teal-600" :
+                locationConfidence >= 50 ? "text-amber-600" : "text-red-500"
+              }`}>{locationConfidence}%</span>
+              <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${
+                    locationConfidence >= 95 ? "bg-green-500" :
+                    locationConfidence >= 80 ? "bg-teal-500" :
+                    locationConfidence >= 50 ? "bg-amber-500" : "bg-red-500"
+                  }`}
+                  style={{ width: `${locationConfidence}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <form className="form-grid" onSubmit={handleSubmit}>
 
@@ -477,7 +763,10 @@ export function ReportPanel({
             Road / River
             <input
               value={roadName}
-              onChange={(e) => setRoadName(e.target.value)}
+              onChange={(e) => {
+                setRoadName(e.target.value);
+                setLocationConfidence(50);
+              }}
               placeholder="e.g. Seaport-Airport Rd"
             />
           </label>
