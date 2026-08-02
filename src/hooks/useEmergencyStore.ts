@@ -160,6 +160,9 @@ export function useEmergencyStore() {
       .on("postgres_changes", { event: "*", schema: "public", table: "incident_images" }, () => {
         fetchIncidents();
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "audit_logs" }, () => {
+        fetchIncidents();
+      })
       .subscribe();
 
     return () => {
@@ -260,6 +263,16 @@ export function useEmergencyStore() {
             body: JSON.stringify(input)
           });
           if (res.ok) {
+            const data = await res.json();
+            if (data.ownershipToken && data.reportId) {
+              try {
+                const tokens = JSON.parse(window.localStorage.getItem("vu-report-ownership-tokens") || "{}");
+                tokens[data.reportId] = data.ownershipToken;
+                window.localStorage.setItem("vu-report-ownership-tokens", JSON.stringify(tokens));
+              } catch (e) {
+                console.error("Failed to store guest ownership token:", e);
+              }
+            }
             await fetchIncidents();
             return true;
           }
@@ -309,6 +322,53 @@ export function useEmergencyStore() {
       }));
 
       return false; // indicates it was queued offline
+    },
+
+    async editReport(reportId: string, notes: string, severity: SeverityLevel, token?: string) {
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/reports/${reportId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ notes, severity, ownershipToken: token })
+          });
+          if (res.ok) {
+            await fetchIncidents();
+            return true;
+          } else {
+            const data = await res.json();
+            alert(data.error || "Failed to edit report");
+          }
+        } catch (err) {
+          console.warn("Failed to PUT edit report:", err);
+        }
+      } else {
+        alert("You must be online to edit reports.");
+      }
+      return false;
+    },
+
+    async deleteReport(reportId: string, token?: string) {
+      if (navigator.onLine) {
+        try {
+          const url = `/api/reports/${reportId}` + (token ? `?token=${encodeURIComponent(token)}` : "");
+          const res = await fetch(url, {
+            method: "DELETE"
+          });
+          if (res.ok) {
+            await fetchIncidents();
+            return true;
+          } else {
+            const data = await res.json();
+            alert(data.error || "Failed to delete report");
+          }
+        } catch (err) {
+          console.warn("Failed to DELETE report:", err);
+        }
+      } else {
+        alert("You must be online to delete reports.");
+      }
+      return false;
     },
 
     // Submit a verification vote (Still Flooded, Water Rising, etc.)

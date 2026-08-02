@@ -464,11 +464,11 @@ function MapClickHandler({ onPickLocation }: { onPickLocation: (coordinates: Coo
   return null;
 }
 
-function MapViewController({ center }: { center: Coordinates }) {
+function MapViewController({ center }: { center: Coordinates & { zoom?: number } }) {
   const map = useMap();
   useEffect(() => {
-    map.flyTo([center.lat, center.lng], map.getZoom(), { duration: 0.6 });
-  }, [center.lat, center.lng, map]);
+    map.flyTo([center.lat, center.lng], center.zoom ?? map.getZoom(), { duration: 0.6 });
+  }, [center.lat, center.lng, center.zoom, map]);
   return null;
 }
 

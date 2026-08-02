@@ -30,6 +30,7 @@ import type { Coordinates, Incident, RouteOption } from "@/lib/types";
 const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
 
 type SafeRoutePlannerProps = {
+  destination?: SearchResultPlace | null;
   userLocation: Coordinates | null;
   incidents: Incident[];
   activeRoute?: RouteOption;
@@ -40,6 +41,7 @@ type SafeRoutePlannerProps = {
 };
 
 export function SafeRoutePlanner({
+  destination,
   userLocation,
   incidents,
   activeRoute,
@@ -90,6 +92,33 @@ export function SafeRoutePlanner({
         .join("|"),
     [incidents]
   );
+
+  // Sync destination from prop (e.g. from global search suggestion click)
+  useEffect(() => {
+    if (destination !== undefined) {
+      if (destination === null) {
+        setSelectedDestination(null);
+        dest.setQuery("");
+        setRoutes([]);
+        onRoutesCalculated?.([]);
+        onRouteChange(undefined);
+      } else if (destination.id !== selectedDestination?.id) {
+        setSelectedDestination(destination);
+        dest.setQuery(destination.name);
+        setIsCalculating(true);
+        calculateRoadRoutes(origin, destination.coordinates, incidents)
+          .then((computedRoutes) => {
+            setRoutes(computedRoutes);
+            onRoutesCalculated?.(computedRoutes);
+            if (computedRoutes.length > 0) onRouteChange(computedRoutes[0]);
+          })
+          .catch((err) => {
+            console.error("Failed to calculate routes:", err);
+          })
+          .finally(() => setIsCalculating(false));
+      }
+    }
+  }, [destination, origin]);
 
   function selectOrigin(place: SearchResultPlace) {
     setCustomOrigin(place.coordinates);

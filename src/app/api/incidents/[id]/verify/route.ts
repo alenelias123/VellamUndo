@@ -128,12 +128,56 @@ export async function POST(request: Request, context: any) {
         severity: newSeverity,
         confidence: newConfidence,
         resolved_at: resolvedAt,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        last_verified_at: new Date().toISOString(),
+        needs_verification: false
       })
       .eq("id", id);
 
     if (errUpdate) {
       return NextResponse.json({ error: errUpdate.message }, { status: 500 });
+    }
+
+    // Insert verification audit log
+    await supabase
+      .from("audit_logs")
+      .insert([{
+        incident_id: id,
+        user_id: reporter.trim(),
+        action: "Verify",
+        target_table: "incident_verifications",
+        target_id: id,
+        new_value: { vote, reporter }
+      }]);
+
+    // Insert resolve audit log if status changed
+    if (newStatus === "resolved" && parentIncident.status !== "resolved") {
+      await supabase
+        .from("audit_logs")
+        .insert([{
+          incident_id: id,
+          user_id: reporter.trim(),
+          action: "Resolve",
+          target_table: "incidents",
+          target_id: id,
+          previous_value: { status: parentIncident.status },
+          new_value: { status: "resolved" }
+        }]);
+    }
+
+    // Insert archive audit log if status changed to archived (false report threshold)
+    if (newStatus === "archived" && parentIncident.status !== "archived") {
+      await supabase
+        .from("audit_logs")
+        .insert([{
+          incident_id: id,
+          user_id: reporter.trim(),
+          action: "Archive",
+          target_table: "incidents",
+          target_id: id,
+          previous_value: { status: parentIncident.status },
+          new_value: { status: "archived" }
+        }]);
     }
 
     return NextResponse.json({

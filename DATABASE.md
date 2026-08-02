@@ -136,3 +136,36 @@ Once the cloud database is running:
     *   For production hosting (Vercel, Netlify): go to your hosting dashboard settings and add these values to the **Environment Variables** panel:
         *   `NEXT_PUBLIC_SUPABASE_URL` = `https://YOUR-PROJECT-REF.supabase.co`
         *   `NEXT_PUBLIC_SUPABASE_ANON_KEY` = `YOUR_CLOUD_PUBLIC_ANON_KEY`
+
+---
+
+## 3. Latest Schema Additions (MVP Enhancements)
+
+The database schema has been upgraded to support advanced reporting trust, guest ownership limits, and detailed system auditing.
+
+### Schema Updates:
+
+#### 1. `incidents` Table additions:
+*   `last_verified_at` (timestamptz): Tracks when the last consensus verification vote occurred.
+*   `last_report_at` (timestamptz): Tracks when the last report was attached to the incident.
+*   `archived_at` (timestamptz): Populated when an incident is archived due to inactivity (>48h).
+*   `needs_verification` (boolean): Flag set automatically when an active incident has no report updates or verifications for 24h.
+
+#### 2. `incident_reports` Table additions:
+*   `ownership_token` (uuid): A unique token generated for guest reporters, valid for a 5-minute edit/delete window.
+*   `is_guest_report` (boolean): Flag denoting whether the reporter was an unauthenticated guest.
+*   `reporter_id` (uuid, FK): Points to `auth.users` for authenticated user actions.
+*   `updated_at` (timestamptz): Tracks report edits.
+*   `deleted_at` (timestamptz): Supports soft-deleting reports.
+
+#### 3. `audit_logs` Table (NEW):
+Used to track system operations and moderator interventions.
+*   `id` (uuid, Primary Key)
+*   `incident_id` (uuid, FK to `incidents`)
+*   `user_id` (text): Tracks who performed the action (Guest, system username, or authenticator email).
+*   `action` (text): Operational action (`Create`, `Update`, `Delete`, `Verify`, `Resolve`, `Archive`).
+*   `target_table` (text): Name of the affected table.
+*   `target_id` (uuid): The ID of the row affected.
+*   `previous_value` (jsonb): JSON state representation prior to the change.
+*   `new_value` (jsonb): JSON state representation after the change.
+*   `created_at` (timestamptz)
