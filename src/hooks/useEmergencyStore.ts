@@ -74,6 +74,11 @@ export type OfflineReportPayload = {
   notes?: string;
   reporter: string;
   photos: string[];
+  elevationMeters?: number;
+  floodStartLat?: number;
+  floodStartLng?: number;
+  floodEndLat?: number;
+  floodEndLng?: number;
 };
 
 export function useEmergencyStore() {
@@ -286,6 +291,11 @@ export function useEmergencyStore() {
           lat: input.latitude,
           lng: input.longitude
         },
+        elevationMeters: input.elevationMeters,
+        floodStartLat: input.floodStartLat,
+        floodStartLng: input.floodStartLng,
+        floodEndLat: input.floodEndLat,
+        floodEndLng: input.floodEndLng,
         confidence: 30, // low confidence for offline temp items
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -385,6 +395,55 @@ export function useEmergencyStore() {
           assignedVolunteer
         )
       }));
+    },
+
+    async editIncident(incidentId: string, updates: Partial<Incident> & { latitude?: number; longitude?: number }) {
+      setState((prev) => ({
+        ...prev,
+        incidents: prev.incidents.map((inc) => {
+          if (inc.id !== incidentId) return inc;
+          const merged = { ...inc, ...updates };
+          if (updates.latitude !== undefined && updates.longitude !== undefined) {
+            merged.coordinates = { lat: updates.latitude, lng: updates.longitude };
+          }
+          return merged;
+        })
+      }));
+
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/incidents/${incidentId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates)
+          });
+          if (res.ok) {
+            await fetchIncidents();
+          }
+        } catch (err) {
+          console.warn("Failed to edit incident online:", err);
+        }
+      }
+    },
+
+    async deleteIncident(incidentId: string) {
+      setState((prev) => ({
+        ...prev,
+        incidents: prev.incidents.filter((inc) => inc.id !== incidentId)
+      }));
+
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/incidents/${incidentId}`, {
+            method: "DELETE"
+          });
+          if (res.ok) {
+            await fetchIncidents();
+          }
+        } catch (err) {
+          console.warn("Failed to delete incident online:", err);
+        }
+      }
     },
 
     // Clears local storage and resets data back to seeds

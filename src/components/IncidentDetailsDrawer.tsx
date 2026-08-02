@@ -5,22 +5,36 @@ import {
   CheckCircle2,
   CheckSquare,
   Clock,
+  Loader2,
+  Lock,
   LogIn,
+  Pencil,
+  Save,
   ShieldCheck,
+  Trash2,
   Users,
   X
 } from "lucide-react";
 import { formatRelativeTime, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import type { AuthUser } from "@/hooks/useAuth";
-import type { Incident, VerificationVote } from "@/lib/types";
+import type { Incident, IncidentType, SeverityLevel, IncidentStatus, VerificationVote } from "@/lib/types";
 
 type IncidentDetailsDrawerProps = {
   incident: Incident;
   user: AuthUser | null;
   onVerify: (incidentId: string, vote: VerificationVote, reporter: string) => Promise<void> | void;
+  onEdit: (
+    incidentId: string,
+    updates: Partial<Incident> & { latitude?: number; longitude?: number }
+  ) => Promise<void> | void;
+  onDelete: (incidentId: string) => Promise<void> | void;
   onClose: () => void;
   onOpenAuth: () => void;
 };
+
+const incidentTypeOptions = Object.keys(incidentTypeMeta) as IncidentType[];
+const severityOptions = Object.keys(severityColorMeta) as SeverityLevel[];
+const statusOptions: IncidentStatus[] = ["active", "receding", "resolved", "archived"];
 
 const voteOptions: Array<{
   id: VerificationVote;
@@ -72,12 +86,28 @@ export function IncidentDetailsDrawer({
   incident,
   user,
   onVerify,
+  onEdit,
+  onDelete,
   onClose,
   onOpenAuth
 }: IncidentDetailsDrawerProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastVote, setLastVote] = useState<VerificationVote | null>(null);
   const [voteSuccess, setVoteSuccess] = useState(false);
+
+  // ── Edit / delete state ───────────────────────────────
+  const [isEditing, setIsEditing] = useState(false);
+  const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editForm, setEditForm] = useState({
+    type: incident.type,
+    severity: incident.severity,
+    status: incident.status,
+    roadName: incident.roadName,
+    landmark: incident.landmark,
+    district: incident.district
+  });
 
   const typeMeta = incidentTypeMeta[incident.type] ?? { label: incident.type, icon: "📍" };
   const sevMeta = severityColorMeta[incident.severity];
@@ -99,6 +129,49 @@ export function IncidentDetailsDrawer({
       console.warn("Vote failed:", err);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  function startEditing() {
+    setEditForm({
+      type: incident.type,
+      severity: incident.severity,
+      status: incident.status,
+      roadName: incident.roadName,
+      landmark: incident.landmark,
+      district: incident.district
+    });
+    setEditError("");
+    setIsDeleteConfirming(false);
+    setIsEditing(true);
+  }
+
+  async function handleSaveEdit(event: React.FormEvent) {
+    event.preventDefault();
+    setIsSavingEdit(true);
+    setEditError("");
+    try {
+      await onEdit(incident.id, editForm);
+      setIsEditing(false);
+    } catch (err) {
+      console.warn("Edit failed:", err);
+      setEditError("Could not save changes. Try again.");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    setIsSavingEdit(true);
+    setEditError("");
+    try {
+      await onDelete(incident.id);
+      onClose();
+    } catch (err) {
+      console.warn("Delete failed:", err);
+      setEditError("Could not delete incident. Try again.");
+      setIsDeleteConfirming(false);
+      setIsSavingEdit(false);
     }
   }
 
@@ -146,6 +219,154 @@ export function IncidentDetailsDrawer({
           </span>
         ) : null}
       </div>
+
+      {/* ── Management actions (authenticated only) ──────── */}
+      {user ? (
+        !isEditing && !isDeleteConfirming ? (
+          <div className="incident-manage-bar">
+            <button type="button" className="incident-manage-btn" onClick={startEditing}>
+              <Pencil size={13} />
+              Edit
+            </button>
+            <button
+              type="button"
+              className="incident-manage-btn incident-manage-btn--danger"
+              onClick={() => { setIsDeleteConfirming(true); setEditError(""); }}
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          </div>
+        ) : null
+      ) : (
+        <div className="incident-auth-gate incident-auth-gate--compact">
+          <div className="incident-auth-gate-icon"><Lock size={13} /></div>
+          <div>
+            <p className="incident-auth-gate-title">Sign in to edit or delete this report</p>
+            <p className="incident-auth-gate-sub">
+              Managing reports is restricted to authenticated accounts.
+            </p>
+          </div>
+          <button type="button" className="incident-auth-gate-btn" onClick={onOpenAuth}>
+            <LogIn size={15} />
+            Sign in with Google
+          </button>
+        </div>
+      )}
+
+      {isDeleteConfirming ? (
+        <div className="incident-delete-confirm">
+          <p className="incident-delete-confirm-title">Delete this incident?</p>
+          <p className="incident-delete-confirm-sub">
+            This permanently removes “{incident.roadName}” and all its reports.
+          </p>
+          {editError ? <p className="incident-edit-error">{editError}</p> : null}
+          <div className="incident-delete-confirm-actions">
+            <button
+              type="button"
+              className="incident-manage-btn"
+              onClick={() => { setIsDeleteConfirming(false); setEditError(""); }}
+              disabled={isSavingEdit}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="incident-manage-btn incident-manage-btn--danger"
+              onClick={() => void handleConfirmDelete()}
+              disabled={isSavingEdit}
+            >
+              {isSavingEdit ? <><Loader2 size={13} className="report-spin" /> Deleting…</> : (<><Trash2 size={13} /> Delete permanently</>)}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {isEditing ? (
+        <form className="incident-edit-form" onSubmit={handleSaveEdit}>
+          <p className="eyebrow">Edit incident</p>
+
+          <label>
+            Road / River
+            <input
+              value={editForm.roadName}
+              onChange={(e) => setEditForm((f) => ({ ...f, roadName: e.target.value }))}
+            />
+          </label>
+
+          <label>
+            Landmark
+            <input
+              value={editForm.landmark}
+              onChange={(e) => setEditForm((f) => ({ ...f, landmark: e.target.value }))}
+            />
+          </label>
+
+          <label>
+            District
+            <input
+              value={editForm.district}
+              onChange={(e) => setEditForm((f) => ({ ...f, district: e.target.value }))}
+            />
+          </label>
+
+          <label>
+            Incident Type
+            <select
+              value={editForm.type}
+              onChange={(e) => setEditForm((f) => ({ ...f, type: e.target.value as IncidentType }))}
+            >
+              {incidentTypeOptions.map((t) => (
+                <option key={t} value={t}>{incidentTypeMeta[t].icon} {t}</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Severity
+            <select
+              value={editForm.severity}
+              onChange={(e) => setEditForm((f) => ({ ...f, severity: e.target.value as SeverityLevel }))}
+            >
+              {severityOptions.map((s) => (
+                <option key={s} value={s}>{severityColorMeta[s].label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Status
+            <select
+              value={editForm.status}
+              onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as IncidentStatus }))}
+            >
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+
+          {editError ? <p className="incident-edit-error">{editError}</p> : null}
+
+          <div className="incident-edit-form-actions">
+            <button
+              type="button"
+              className="incident-manage-btn"
+              onClick={() => { setIsEditing(false); setEditError(""); }}
+              disabled={isSavingEdit}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="incident-manage-btn incident-manage-btn--primary"
+              disabled={isSavingEdit}
+            >
+              {isSavingEdit ? <><Loader2 size={13} className="report-spin" /> Saving…</> : (<><Save size={13} /> Save changes</>)}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {/* ── Verification summary bar ─────────────────────── */}
       {verif.total > 0 ? (

@@ -34,7 +34,16 @@ type FloodMapProps = {
   selectedIncidentId?: string;
   activeRoute?: RouteOption;
   routes?: RouteOption[];
+  routeOrigin?: Coordinates;
+  routeDestination?: Coordinates;
+  routeMapPickMode?: "origin" | "destination" | null;
+  isDrawingStretch?: boolean;
+  stretchStart?: Coordinates;
+  stretchEnd?: Coordinates;
+  onStretchChange?: (start: Coordinates, end: Coordinates) => void;
+  onStretchPoint?: (point: Coordinates) => void;
   onSelectRoute?: (route: RouteOption) => void;
+  onRoutePinMoved?: (mode: "origin" | "destination", coordinates: Coordinates) => void;
   pendingLocation?: Coordinates;
   gpsLoading?: boolean;
   onRecenter?: () => void;
@@ -51,7 +60,16 @@ export function FloodMap({
   selectedIncidentId,
   activeRoute,
   routes = [],
+  routeOrigin,
+  routeDestination,
+  routeMapPickMode = null,
+  isDrawingStretch = false,
+  stretchStart,
+  stretchEnd,
+  onStretchChange,
+  onStretchPoint,
   onSelectRoute,
+  onRoutePinMoved,
   pendingLocation,
   gpsLoading = false,
   onRecenter,
@@ -77,16 +95,29 @@ export function FloodMap({
       center={[center.lat, center.lng]}
       zoom={11}
       scrollWheelZoom
-      className="flood-map"
+      className={[
+        "flood-map",
+        routeMapPickMode ? `flood-map--pick-${routeMapPickMode}` : ""
+      ].join(" ")}
       zoomControl={false}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <MapClickHandler onPickLocation={onPickLocation} />
-      <MapViewController center={center} />
+      <MapClickHandler
+        isDrawingStretch={isDrawingStretch}
+        onPickLocation={onPickLocation}
+        onStretchPoint={onStretchPoint}
+      />
+      <MapViewController center={center} hasActiveRoute={Boolean(activeRoute)} />
       <RouteViewController activeRoute={activeRoute} />
+      {routeMapPickMode ? (
+        <MapPickModeBadge mode={routeMapPickMode} />
+      ) : null}
+      {isDrawingStretch ? (
+        <StretchDrawBadge hasStart={Boolean(stretchStart)} hasEnd={Boolean(stretchEnd)} />
+      ) : null}
 
       {/* Recenter / GPS refresh button */}
       {onRecenter ? (
@@ -120,6 +151,7 @@ export function FloodMap({
       {routes.map((routeOption) => {
         const isSelected = activeRoute?.id === routeOption.id;
         const isFaded = !!activeRoute && !isSelected;
+        const isPrimaryRoute = routeOption.id === "osrm-0";
         const risk = routeOption.analysis?.floodRisk ?? "LOW";
         const health = routeOption.analysis?.routeHealth ?? 100;
         const isBlocked = health === 0 || risk === "EXTREME";
@@ -131,7 +163,15 @@ export function FloodMap({
         else if (risk === "MEDIUM") color = "#0284c7";
         else                        color = "#157f3b";
 
-        const opacity = isSelected ? 0.95 : isFaded ? 0.18 : isBlocked ? 0.6 : 0.45;
+        const opacity = isSelected
+          ? 0.95
+          : isFaded
+          ? isPrimaryRoute && isBlocked
+            ? 0.34
+            : 0.18
+          : isBlocked
+          ? 0.7
+          : 0.45;
         const weight  = isSelected ? 7 : 4;
 
         // For blocked routes: find where the passable segment ends
@@ -169,8 +209,8 @@ export function FloodMap({
                   positions={passableCoords.map(toLatLng)}
                   pathOptions={{
                     color: "#16a34a",
-                    opacity: isSelected ? 0.9 : isFaded ? 0.2 : 0.55,
-                    weight,
+                    opacity: isSelected ? 0.9 : isFaded ? 0.24 : 0.55,
+                    weight: isPrimaryRoute ? weight + 1 : weight,
                     lineCap: "round",
                     lineJoin: "round"
                   }}
@@ -185,11 +225,11 @@ export function FloodMap({
                     positions={routeOption.coordinates.slice(blockageIdx).map(toLatLng)}
                     pathOptions={{
                       color: "#ef4444",
-                      opacity: isSelected ? 0.55 : isFaded ? 0.1 : 0.28,
-                      weight: isSelected ? 5 : 3,
+                      opacity: isSelected ? 0.68 : isFaded ? 0.28 : 0.45,
+                      weight: isSelected ? 5 : isPrimaryRoute ? 4 : 3,
                       lineCap: "round",
                       lineJoin: "round",
-                      dashArray: "6 7"
+                      dashArray: isPrimaryRoute ? "8 6" : "6 7"
                     }}
                     interactive={false}
                   />
@@ -258,31 +298,126 @@ export function FloodMap({
       ) : null}
 
       {/* Route endpoint pins — A (green) at origin, B (red) at destination */}
-      {activeRoute && activeRoute.coordinates.length >= 2 ? (
+      {(routeDestination || activeRoute || routeMapPickMode) ? (
         <>
-          <Marker
-            position={toLatLng(activeRoute.coordinates[0])}
-            icon={makeRouteEndpointIcon("origin")}
-            zIndexOffset={900}
-          >
-            <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
-              Start
-            </Tooltip>
-          </Marker>
+          {(routeOrigin ?? activeRoute?.coordinates[0]) && (activeRoute || routeDestination || routeMapPickMode === "origin") ? (
+            <Marker
+              position={toLatLng((routeOrigin ?? activeRoute!.coordinates[0]) as Coordinates)}
+              icon={makeRouteEndpointIcon("origin")}
+              zIndexOffset={900}
+              draggable={Boolean(onRoutePinMoved) && routeMapPickMode === "origin"}
+              eventHandlers={
+                onRoutePinMoved && routeMapPickMode === "origin"
+                  ? {
+                      dragend: (event) => {
+                        const marker = event.target as L.Marker;
+                        const latLng = marker.getLatLng();
+                        onRoutePinMoved("origin", {
+                          lat: Number(latLng.lat.toFixed(5)),
+                          lng: Number(latLng.lng.toFixed(5))
+                        });
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                Start{routeMapPickMode === "origin" ? " (drag to move)" : ""}
+              </Tooltip>
+            </Marker>
+          ) : null}
 
-          <Marker
-            position={toLatLng(activeRoute.coordinates[activeRoute.coordinates.length - 1])}
-            icon={makeRouteEndpointIcon("destination")}
-            zIndexOffset={900}
-          >
-            <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
-              Destination
-            </Tooltip>
-          </Marker>
+          {(routeDestination ?? activeRoute?.coordinates[activeRoute.coordinates.length - 1]) ? (
+            <Marker
+              position={toLatLng((routeDestination ?? activeRoute!.coordinates[activeRoute!.coordinates.length - 1]) as Coordinates)}
+              icon={makeRouteEndpointIcon("destination")}
+              zIndexOffset={900}
+              draggable={Boolean(onRoutePinMoved) && routeMapPickMode === "destination"}
+              eventHandlers={
+                onRoutePinMoved && routeMapPickMode === "destination"
+                  ? {
+                      dragend: (event) => {
+                        const marker = event.target as L.Marker;
+                        const latLng = marker.getLatLng();
+                        onRoutePinMoved("destination", {
+                          lat: Number(latLng.lat.toFixed(5)),
+                          lng: Number(latLng.lng.toFixed(5))
+                        });
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                Destination{routeMapPickMode === "destination" ? " (drag to move)" : ""}
+              </Tooltip>
+            </Marker>
+          ) : null}
         </>
       ) : null}
 
-      {/* Render incident markers */}
+      {/* Render draggable stretch markers if drawing */}
+      {isDrawingStretch && stretchStart ? (
+        <>
+          <Marker
+            position={toLatLng(stretchStart)}
+            draggable={Boolean(stretchEnd)}
+            eventHandlers={{
+              dragend: (e) => {
+                const latlng = e.target.getLatLng();
+                if (onStretchChange && stretchEnd) {
+                  onStretchChange(
+                    { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) },
+                    stretchEnd
+                  );
+                }
+              }
+            }}
+            icon={makeTextIcon("stretch-start", "S", "#ea580c")}
+            zIndexOffset={1000}
+          >
+            <Tooltip direction="top" permanent>
+              {stretchEnd ? "Start of Flood Stretch (Drag me)" : "Start of Flood Stretch — now click the end"}
+            </Tooltip>
+          </Marker>
+          {stretchEnd ? (
+            <>
+              <Marker
+                position={toLatLng(stretchEnd)}
+                draggable={true}
+                eventHandlers={{
+                  dragend: (e) => {
+                    const latlng = e.target.getLatLng();
+                    if (onStretchChange && stretchStart) {
+                      onStretchChange(
+                        stretchStart,
+                        { lat: Number(latlng.lat.toFixed(5)), lng: Number(latlng.lng.toFixed(5)) }
+                      );
+                    }
+                  }
+                }}
+                icon={makeTextIcon("stretch-end", "E", "#ea580c")}
+                zIndexOffset={1000}
+              >
+                <Tooltip direction="top" permanent>
+                  End of Flood Stretch (Drag me)
+                </Tooltip>
+              </Marker>
+              <Polyline
+                positions={[toLatLng(stretchStart), toLatLng(stretchEnd)]}
+                pathOptions={{
+                  color: "#ea580c",
+                  dashArray: "6, 6",
+                  weight: 5,
+                  opacity: 0.9
+                }}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* Render incident markers and their stretches */}
       {incidents
         .filter((inc) => inc.status !== "archived")
         .map((incident) => {
@@ -293,33 +428,50 @@ export function FloodMap({
             (ai) => ai.id === incident.id
           );
 
+          const hasStretch = incident.floodStartLat && incident.floodStartLng && incident.floodEndLat && incident.floodEndLng;
+
           return (
-            <Marker
-              key={incident.id}
-              position={toLatLng(incident.coordinates)}
-              icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected, isIncidentOnSelectedRoute)}
-              eventHandlers={{ click: () => onSelectIncident(incident.id) }}
-            >
-              <Popup>
-                <div className="map-popup">
-                  <div className="flex items-center gap-1.5 font-bold text-sm">
-                    <span>{typeMeta.icon}</span>
-                    <span>{incident.type}</span>
+            <React.Fragment key={incident.id}>
+              {hasStretch && (
+                <Polyline
+                  positions={[
+                    [incident.floodStartLat!, incident.floodStartLng!],
+                    [incident.floodEndLat!, incident.floodEndLng!]
+                  ]}
+                  pathOptions={{
+                    color: sevMeta.color,
+                    weight: isSelected ? 6 : 4,
+                    opacity: isSelected ? 0.9 : 0.65,
+                    dashArray: "4, 6"
+                  }}
+                />
+              )}
+              <Marker
+                position={toLatLng(incident.coordinates)}
+                icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected, isIncidentOnSelectedRoute)}
+                eventHandlers={{ click: () => onSelectIncident(incident.id) }}
+              >
+                <Popup>
+                  <div className="map-popup">
+                    <div className="flex items-center gap-1.5 font-bold text-sm">
+                      <span>{typeMeta.icon}</span>
+                      <span>{incident.type}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 font-semibold">{incident.roadName}</span>
+                    <span className="text-xs text-gray-600 italic">Near {incident.landmark}</span>
+                    <div className="flex gap-2 items-center mt-1">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10px] text-white font-bold"
+                        style={{ backgroundColor: sevMeta.color }}
+                      >
+                        {sevMeta.label}
+                      </span>
+                      <span className="text-xs font-bold text-blue-600">{incident.confidence}% match</span>
+                    </div>
                   </div>
-                  <span className="text-xs text-gray-500 font-semibold">{incident.roadName}</span>
-                  <span className="text-xs text-gray-600 italic">Near {incident.landmark}</span>
-                  <div className="flex gap-2 items-center mt-1">
-                    <span
-                      className="px-1.5 py-0.5 rounded text-[10px] text-white font-bold"
-                      style={{ backgroundColor: sevMeta.color }}
-                    >
-                      {sevMeta.label}
-                    </span>
-                    <span className="text-xs font-bold text-blue-600">{incident.confidence}% match</span>
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
+                </Popup>
+              </Marker>
+            </React.Fragment>
           );
         })}
 
@@ -381,6 +533,52 @@ export function FloodMap({
       ) : null}
     </MapContainer>
   );
+}
+
+function MapPickModeBadge({ mode }: { mode: "origin" | "destination" }) {
+  const map = useMap();
+  useEffect(() => {
+    const BadgeCtrl = L.Control.extend({
+      onAdd() {
+        const el = L.DomUtil.create("div", "vu-map-pick-badge");
+        el.innerHTML = mode === "origin"
+          ? "Pick source pin on map"
+          : "Pick destination pin on map";
+        return el;
+      },
+      onRemove() {}
+    });
+    const badge = new BadgeCtrl({ position: "topright" });
+    badge.addTo(map);
+    return () => {
+      badge.remove();
+    };
+  }, [map, mode]);
+  return null;
+}
+
+function StretchDrawBadge({ hasStart, hasEnd }: { hasStart: boolean; hasEnd: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    const BadgeCtrl = L.Control.extend({
+      onAdd() {
+        const el = L.DomUtil.create("div", "vu-map-pick-badge vu-stretch-badge");
+        el.innerHTML = !hasStart
+          ? "Click the map to mark the START of the flooded road stretch"
+          : !hasEnd
+            ? "Click the map to mark the END of the flooded road stretch"
+            : "Stretch set — drag the S / E markers to adjust";
+        return el;
+      },
+      onRemove() {}
+    });
+    const badge = new BadgeCtrl({ position: "topright" });
+    badge.addTo(map);
+    return () => {
+      badge.remove();
+    };
+  }, [map, hasStart, hasEnd]);
+  return null;
 }
 
 // ── Recenter control ──────────────────────────────────────────────────────────
@@ -452,33 +650,79 @@ function renderBtnState(btn: HTMLButtonElement, loading: boolean, hasLocation: b
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-function MapClickHandler({ onPickLocation }: { onPickLocation: (coordinates: Coordinates) => void }) {
+function MapClickHandler({
+  isDrawingStretch,
+  onPickLocation,
+  onStretchPoint
+}: {
+  isDrawingStretch?: boolean;
+  onPickLocation: (coordinates: Coordinates) => void;
+  onStretchPoint?: (point: Coordinates) => void;
+}) {
   useMapEvents({
     click(event) {
-      onPickLocation({
+      const coords: Coordinates = {
         lat: Number(event.latlng.lat.toFixed(5)),
         lng: Number(event.latlng.lng.toFixed(5))
-      });
+      };
+      if (isDrawingStretch && onStretchPoint) {
+        onStretchPoint(coords);
+      } else {
+        onPickLocation(coords);
+      }
     }
   });
   return null;
 }
 
-function MapViewController({ center }: { center: Coordinates }) {
+function MapViewController({
+  center,
+  hasActiveRoute
+}: {
+  center: Coordinates;
+  hasActiveRoute: boolean;
+}) {
   const map = useMap();
   useEffect(() => {
+    if (hasActiveRoute) return;
     map.flyTo([center.lat, center.lng], map.getZoom(), { duration: 0.6 });
-  }, [center.lat, center.lng, map]);
+  }, [center.lat, center.lng, hasActiveRoute, map]);
   return null;
 }
 
 function RouteViewController({ activeRoute }: { activeRoute?: RouteOption }) {
   const map = useMap();
+
   useEffect(() => {
-    if (activeRoute && activeRoute.coordinates.length > 0) {
+    if (!activeRoute || activeRoute.coordinates.length === 0) return;
+
+    const fitRoute = () => {
       const latLngs = activeRoute.coordinates.map((c) => [c.lat, c.lng] as [number, number]);
-      map.fitBounds(L.latLngBounds(latLngs), { padding: [60, 60], maxZoom: 13, duration: 0.8 });
-    }
+      if (latLngs.length === 1) {
+        map.setView(latLngs[0], 14, { animate: true, duration: 0.6 });
+        return;
+      }
+
+      const bounds = L.latLngBounds(latLngs);
+      if (!bounds.isValid()) return;
+
+      const size = map.getSize();
+      const padX = Math.min(180, Math.max(44, Math.round(size.x * 0.12)));
+      const padY = Math.min(200, Math.max(52, Math.round(size.y * 0.14)));
+
+      map.fitBounds(bounds, {
+        paddingTopLeft: [padX, padY],
+        paddingBottomRight: [padX, padY],
+        maxZoom: 15,
+        animate: true
+      });
+    };
+
+    fitRoute();
+    map.on("resize", fitRoute);
+    return () => {
+      map.off("resize", fitRoute);
+    };
   }, [activeRoute, map]);
   return null;
 }
@@ -487,7 +731,7 @@ function toLatLng(coordinates: Coordinates): [number, number] {
   return [coordinates.lat, coordinates.lng];
 }
 
-function makeTextIcon(kind: "center" | "help" | "pending", text: string, color: string) {
+function makeTextIcon(kind: "center" | "help" | "pending" | "stretch-start" | "stretch-end", text: string, color: string) {
   return L.divIcon({
     className: `vu-map-icon vu-map-icon--${kind}`,
     html: `<span style="background:${color}">${text}</span>`,

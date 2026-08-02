@@ -133,6 +133,31 @@ export async function GET() {
 
       // Calculate confidence dynamically to keep it up to date
       const confidence = calculateIncidentConfidence(reports, verifications, db.created_at);
+      let floodStartLat = db.flood_start_lat;
+      let floodStartLng = db.flood_start_lng;
+      let floodEndLat = db.flood_end_lat;
+      let floodEndLng = db.flood_end_lng;
+      let landmarkText = db.landmark || "";
+      let elevationMeters = db.elevation_meters ?? undefined;
+
+      if (!floodStartLat && db.landmark) {
+        const match = db.landmark.match(/\[STRETCH:([\d.-]+),([\d.-]+);([\d.-]+),([\d.-]+)\]/);
+        if (match) {
+          floodStartLat = Number(match[1]);
+          floodStartLng = Number(match[2]);
+          floodEndLat = Number(match[3]);
+          floodEndLng = Number(match[4]);
+          landmarkText = db.landmark.replace(/\[STRETCH:[\d.-]+,[\d.-]+;[\d.-]+,[\d.-]+\]/, "").trim();
+        }
+      }
+
+      if (elevationMeters === undefined && db.landmark) {
+        const elevMatch = db.landmark.match(/\[ELEV:([\d.-]+)\]/);
+        if (elevMatch) {
+          elevationMeters = Number(elevMatch[1]);
+          landmarkText = landmarkText.replace(/\[ELEV:[\d.-]+\]/, "").trim();
+        }
+      }
 
       return {
         id: db.id,
@@ -140,7 +165,7 @@ export async function GET() {
         status: db.status,
         severity: db.severity as SeverityLevel,
         roadName: db.road_name,
-        landmark: db.landmark,
+        landmark: landmarkText,
         district: db.district,
         coordinates: {
           lat: db.latitude,
@@ -150,8 +175,13 @@ export async function GET() {
         createdAt: db.created_at,
         updatedAt: db.updated_at,
         resolvedAt: db.resolved_at || undefined,
+        elevationMeters,
         reports,
-        verifications
+        verifications,
+        floodStartLat: floodStartLat || undefined,
+        floodStartLng: floodStartLng || undefined,
+        floodEndLat: floodEndLat || undefined,
+        floodEndLng: floodEndLng || undefined
       };
     });
 
@@ -179,7 +209,12 @@ export async function POST(request: Request) {
       type,
       roadName,
       landmark,
-      district
+      district,
+      elevationMeters,
+      floodStartLat,
+      floodStartLng,
+      floodEndLat,
+      floodEndLng
     } = body;
 
     if (!latitude || !longitude || !severity || !type || !roadName || !landmark || !district) {
@@ -221,21 +256,48 @@ export async function POST(request: Request) {
     } else {
       isNewIncident = true;
       // Insert new Incident
-      const { data: newInc, error: errNewInc } = await supabase
+      const insertRow: Record<string, any> = {
+        type,
+        status: "active",
+        severity,
+        road_name: roadName,
+        landmark,
+        district,
+        latitude,
+        longitude,
+        confidence: 45 // base starting confidence
+      };
+      if (elevationMeters !== undefined) insertRow.elevation_meters = elevationMeters;
+      if (floodStartLat !== undefined) insertRow.flood_start_lat = floodStartLat;
+      if (floodStartLng !== undefined) insertRow.flood_start_lng = floodStartLng;
+      if (floodEndLat !== undefined) insertRow.flood_end_lat = floodEndLat;
+      if (floodEndLng !== undefined) insertRow.flood_end_lng = floodEndLng;
+
+      let { data: newInc, error: errNewInc } = await supabase
         .from("incidents")
-        .insert([{
-          type,
-          status: "active",
-          severity,
-          road_name: roadName,
-          landmark,
-          district,
-          latitude,
-          longitude,
-          confidence: 45 // base starting confidence
-        }])
+        .insert([insertRow])
         .select()
         .single();
+
+      if (errNewInc && errNewInc.code === "42703") {
+        const fallbackRow = { ...insertRow };
+        delete fallbackRow.elevation_meters;
+        delete fallbackRow.flood_start_lat;
+        delete fallbackRow.flood_start_lng;
+        delete fallbackRow.flood_end_lat;
+        delete fallbackRow.flood_end_lng;
+        if (elevationMeters !== undefined) fallbackRow.landmark = `${fallbackRow.landmark || ""} [ELEV:${elevationMeters}]`;
+        if (floodStartLat && floodStartLng && floodEndLat && floodEndLng) {
+          fallbackRow.landmark = `${fallbackRow.landmark || ""} [STRETCH:${floodStartLat},${floodStartLng};${floodEndLat},${floodEndLng}]`;
+        }
+        const { data: fbInc, error: fbErr } = await supabase
+          .from("incidents")
+          .insert([fallbackRow])
+          .select()
+          .single();
+        newInc = fbInc;
+        errNewInc = fbErr;
+      }
 
       if (errNewInc || !newInc) {
         return NextResponse.json({ error: errNewInc?.message || "Failed to create incident" }, { status: 500 });
