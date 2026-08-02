@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   Camera,
   CheckCircle,
   CheckCircle2,
+  Droplets,
   Loader2,
   MapPin,
   RotateCcw,
@@ -51,13 +53,13 @@ type ReportPanelProps = {
   onPickLocation: (coords: Coordinates) => void;
   onSubmit: (input: OfflineReportPayload) => Promise<boolean>;
   onResetDemoData: () => void;
+  onBack?: () => void;
   isDrawingStretch?: boolean;
   stretchStart?: Coordinates;
   stretchEnd?: Coordinates;
   stretchPath?: Coordinates[];
   stretchPathKm?: number;
   isResolvingStretch?: boolean;
-  onToggleStretchDrawing?: (active: boolean) => void;
   onStretchChange?: (start: Coordinates, end: Coordinates) => void;
   onStretchReset?: () => void;
 };
@@ -65,18 +67,22 @@ type ReportPanelProps = {
 const incidentTypes = Object.keys(incidentTypeMeta) as IncidentType[];
 const severityLevels = Object.keys(severityColorMeta) as SeverityLevel[];
 
+function formatDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+}
+
 export function ReportPanel({
   pendingLocation,
   onPickLocation,
   onSubmit,
   onResetDemoData,
+  onBack,
   isDrawingStretch = false,
   stretchStart,
   stretchEnd,
   stretchPath,
   stretchPathKm,
   isResolvingStretch = false,
-  onToggleStretchDrawing,
   onStretchChange,
   onStretchReset
 }: ReportPanelProps) {
@@ -448,14 +454,26 @@ export function ReportPanel({
             <p className="eyebrow">Realtime Emergency</p>
             <h2>Report Incident</h2>
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={onResetDemoData}
-            title="Reset demo data"
-          >
-            <RotateCcw size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            {onBack && (
+              <button
+                className="icon-button"
+                type="button"
+                onClick={onBack}
+                title="Back to route planner"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            )}
+            <button
+              className="icon-button"
+              type="button"
+              onClick={onResetDemoData}
+              title="Reset demo data"
+            >
+              <RotateCcw size={16} />
+            </button>
+          </div>
         </div>
 
         {/* ── GPS error banner ───────────────────────────── */}
@@ -467,35 +485,49 @@ export function ReportPanel({
 
         {/* ── Snapping Banner (Step 7) ───────────────────────── */}
         {snapBanner && (
-          <div className="bg-teal-50 border border-teal-200 text-teal-800 p-3 rounded-lg flex flex-col gap-1.5 mb-4 animate-fadeIn">
-            <div className="flex items-center gap-1.5 font-bold text-xs">
-              <CheckCircle2 size={14} className="text-teal-600" />
-              Location adjusted to nearest road.
-            </div>
-            <div className="text-[11px] text-teal-700 flex justify-between items-center">
-              <span>Road: <strong>{snapBanner.roadName}</strong> ({snapBanner.distance} meters away)</span>
-              <div className="flex gap-2">
-                <button type="button" className="px-2 py-0.5 bg-teal-600 hover:bg-teal-700 text-white rounded font-bold text-[10px] transition active:scale-95" onClick={() => setSnapBanner(null)}>Accept</button>
-                <button type="button" className="px-2 py-0.5 bg-white border border-teal-300 text-teal-800 hover:bg-teal-50 rounded font-bold text-[10px] transition active:scale-95" onClick={() => { setSnapBanner(null); setLocationConfidence(50); }}>Move Pin</button>
+          <div className="bg-teal-50 border border-teal-200 text-teal-800 p-3 rounded-lg flex flex-col gap-2 mb-4 animate-fadeIn">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 font-bold text-xs">
+                <CheckCircle2 size={14} className="text-teal-600" />
+                Snapped to nearest road
+              </span>
+              <div className="flex gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  className="chip-button chip-button--primary"
+                  onClick={() => setSnapBanner(null)}
+                >
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  className="chip-button chip-button--teal"
+                  onClick={() => { setSnapBanner(null); setLocationConfidence(50); }}
+                >
+                  Move Pin
+                </button>
               </div>
             </div>
+            <p className="text-[11px] text-teal-700 leading-relaxed">
+              <strong>{snapBanner.roadName}</strong> · {formatDistance(snapBanner.distance)} away
+            </p>
           </div>
         )}
 
         {/* ── Distance Warning (> 50m, Step 3) ───────────────── */}
         {distanceWarning && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg flex flex-col gap-2 mb-4 animate-fadeIn">
+          <div className="bg-teal-50 border border-teal-200 text-teal-800 p-3 rounded-lg flex flex-col gap-2 mb-4 animate-fadeIn">
             <div className="flex items-center gap-1.5 font-bold text-xs">
-              <AlertTriangle size={14} className="text-amber-600" />
-              Nearest road is {distanceWarning.distance} meters away.
+              <AlertTriangle size={14} className="text-teal-600" />
+              {formatDistance(distanceWarning.distance)} from nearest road
             </div>
-            <p className="text-[10px] text-amber-700 leading-relaxed">
-              The location you selected is far from any known roads. Do you want to snap the marker to <strong>{distanceWarning.tempRoad}</strong>?
+            <p className="text-[11px] text-teal-700 leading-relaxed">
+              Snap the marker to <strong>{distanceWarning.tempRoad}</strong>?
             </p>
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
-                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold transition active:scale-95"
+                className="chip-button chip-button--primary"
                 onClick={async () => {
                   const { tempCoords, tempRoad, distance } = distanceWarning;
                   lastSnappedCoordsRef.current = tempCoords;
@@ -522,21 +554,21 @@ export function ReportPanel({
                   setDistanceWarning(null);
                 }}
               >
-                Use Nearest Road
+                Snap to road
               </button>
               <button
                 type="button"
-                className="px-2.5 py-1 bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 rounded text-[10px] font-bold transition active:scale-95"
+                className="chip-button chip-button--teal"
                 onClick={() => {
                   setDistanceWarning(null);
                   setLocationConfidence(50);
                 }}
               >
-                Move Pin (Manual)
+                Keep manual
               </button>
               <button
                 type="button"
-                className="px-2.5 py-1 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded text-[10px] font-bold transition active:scale-95"
+                className="chip-button"
                 onClick={() => {
                   setDistanceWarning(null);
                   setLocationConfidence(50);
@@ -548,46 +580,13 @@ export function ReportPanel({
           </div>
         )}
 
-        {/* ── Location Quality Score Widget (Step 6) ────────── */}
-        {pendingLocation && (
-          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-xs mb-4 flex items-center justify-between animate-fadeIn">
-            <div className="flex flex-col gap-0.5 pr-2">
-              <span className="font-semibold text-slate-700">Location Quality Score:</span>
-              <span className="text-[10px] text-slate-500 leading-snug">
-                {locationConfidence === 100 && "Exact matched road coordinate."}
-                {locationConfidence === 95 && "Automatically snapped to nearest road."}
-                {locationConfidence === 80 && "Manually snapped to nearest road."}
-                {locationConfidence === 50 && "Manual pin or road name adjustment."}
-                {locationConfidence === 20 && "Unknown road. Please verify manually."}
-              </span>
-            </div>
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              <span className={`font-bold text-[11px] ${
-                locationConfidence >= 95 ? "text-green-600" :
-                locationConfidence >= 80 ? "text-teal-600" :
-                locationConfidence >= 50 ? "text-amber-600" : "text-red-500"
-              }`}>{locationConfidence}%</span>
-              <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-300 ${
-                    locationConfidence >= 95 ? "bg-green-500" :
-                    locationConfidence >= 80 ? "bg-teal-500" :
-                    locationConfidence >= 50 ? "bg-amber-500" : "bg-red-500"
-                  }`}
-                  style={{ width: `${locationConfidence}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
         <form className="form-grid" onSubmit={handleSubmit}>
 
           {/* ── Location card ──────────────────────────────── */}
           <div className="span-2 report-location-card">
             <div className="report-location-row">
               <span className="report-location-label">
-                <MapPin size={13} />
+                <MapPin size={14} />
                 Incident Location
               </span>
               <button
@@ -598,14 +597,14 @@ export function ReportPanel({
                 style={{ padding: "0 8px", minHeight: 28, fontSize: "0.75rem" }}
               >
                 {gpsLoading ? (
-                  <><Loader2 size={11} className="report-spin" /> Locking…</>
+                  <><Loader2 size={12} className="report-spin" /> Locking…</>
                 ) : "Use my GPS"}
               </button>
             </div>
 
             {pendingLocation ? (
               <span className="report-coords">
-                📍 {pendingLocation.lat.toFixed(5)}, {pendingLocation.lng.toFixed(5)}
+                <MapPin size={14} className="inline" /> {pendingLocation.lat.toFixed(5)}, {pendingLocation.lng.toFixed(5)}
               </span>
             ) : (
               <span className="report-coords report-coords--empty">
@@ -615,7 +614,7 @@ export function ReportPanel({
 
             {isGeocoding ? (
               <span className="report-geocoding-status">
-                <Loader2 size={11} className="report-spin" />
+                <Loader2 size={12} className="report-spin" />
                 Reverse geocoding…
               </span>
             ) : null}
@@ -625,7 +624,7 @@ export function ReportPanel({
               <p className="location-search-label">Or search a custom start location:</p>
               <div className="location-search-row">
                 <div className="location-search-input-wrap">
-                  <Search size={13} className="location-search-icon" />
+                  <Search size={14} className="location-search-icon" />
                   <input
                     type="text"
                     className="location-search-input"
@@ -665,9 +664,9 @@ export function ReportPanel({
                   disabled={location$.isLoading || locationQuery.trim().length < 2}
                 >
                   {location$.isLoading ? (
-                    <Loader2 size={13} className="report-spin" />
+                    <Loader2 size={14} className="report-spin" />
                   ) : (
-                    <Search size={13} />
+                    <Search size={14} />
                   )}
                 </button>
               </div>
@@ -684,7 +683,10 @@ export function ReportPanel({
                         type="button"
                         onClick={() => selectSearchedLocation(result)}
                       >
-                        <strong>📍 {result.name}</strong>
+                        <strong className="inline-flex items-center gap-1.5">
+                          <MapPin size={14} className="shrink-0" />
+                          {result.name}
+                        </strong>
                         <small>{result.fullName}</small>
                       </button>
                     </li>
@@ -694,39 +696,34 @@ export function ReportPanel({
             </div>
           </div>
 
-          {/* ── Flooded road stretch ───────────────────────── */}
+          {/* ── Incident details section ───────────────────── */}
+          <div className="span-2 form-section-label">Incident Details</div>
+
+          {/* ── Flooded road stretch (visible only while tracing) ── */}
+          {isDrawingStretch ? (
           <div className="span-2 stretch-tool-card">
             <div className="stretch-tool-head">
               <span className="stretch-tool-label">
-                <MapPin size={13} />
+                <MapPin size={14} />
                 Flooded road stretch
               </span>
-              <button
-                type="button"
-                className={`stretch-toggle-btn${isDrawingStretch ? " stretch-toggle-btn--active" : ""}`}
-                onClick={() => onToggleStretchDrawing?.(!isDrawingStretch)}
-                title="Draw the exact flooded length of the road on the map"
-              >
-                {isDrawingStretch ? "Cancel drawing" : "Draw stretch"}
-              </button>
+              <span className="stretch-status-chip stretch-status-chip--drawing">Drawing on map…</span>
             </div>
 
-            {isDrawingStretch ? (
-              <p className="stretch-hint">
-                Click on the map to mark the <strong>start</strong>, then the{" "}
-                <strong>end</strong> of the flooded road. Drag the S / E markers to fine-tune.
-              </p>
-            ) : null}
+            <p className="stretch-hint">
+              Click on the map to mark the <strong>start</strong>, then the{" "}
+              <strong>end</strong> of the flooded road. Drag the S / E markers to fine-tune.
+            </p>
 
             {stretchStart && stretchEnd ? (
               <div className="stretch-status-row">
                 <span className={`stretch-status-chip${isResolvingStretch ? " stretch-status-chip--muted" : ""}`}>
                   {isResolvingStretch
                     ? "Calculating road path…"
-                    : `🌊 ${(
+                    : <><Droplets size={14} className="inline" /> {(
                         stretchPathKm ??
                         haversineDistanceKm(stretchStart, stretchEnd)
-                      ).toFixed(2)} km flooded`}
+                      ).toFixed(2)} km flooded</>}
                 </span>
                 <span className="stretch-status-coords">
                   ({stretchStart.lat.toFixed(4)}, {stretchStart.lng.toFixed(4)}) → (
@@ -745,6 +742,7 @@ export function ReportPanel({
               <p className="stretch-hint">Start marked — now click the map for the end of the stretch.</p>
             ) : null}
           </div>
+          ) : null}
 
           {/* ── Incident type ──────────────────────────────── */}
           <label className="span-2">
@@ -752,7 +750,7 @@ export function ReportPanel({
             <select value={type} onChange={(e) => setType(e.target.value as IncidentType)}>
               {incidentTypes.map((t) => (
                 <option key={t} value={t}>
-                  {incidentTypeMeta[t].icon} {t}
+                  {t}
                 </option>
               ))}
             </select>
@@ -806,6 +804,9 @@ export function ReportPanel({
             </div>
           </label>
 
+          {/* ── Photos section ─────────────────────────────── */}
+          <div className="span-2 form-section-label">Photos</div>
+
           {/* ── Photos ─────────────────────────────────────── */}
           <label className="span-2">
             Photos
@@ -834,7 +835,7 @@ export function ReportPanel({
                       </span>
                     ) : (
                       <span className="upload-status upload-status--done">
-                        <CheckCircle2 size={11} /> Done
+                        <CheckCircle2 size={12} /> Done
                       </span>
                     )}
                   </li>
@@ -842,6 +843,9 @@ export function ReportPanel({
               </ul>
             ) : null}
           </label>
+
+          {/* ── Notes section ──────────────────────────────── */}
+          <div className="span-2 form-section-label">Notes & Reporter</div>
 
           {/* ── Notes ──────────────────────────────────────── */}
           <label className="span-2">
@@ -879,12 +883,12 @@ export function ReportPanel({
           >
             {isSubmitting ? (
               <>
-                <Loader2 size={15} className="report-spin" />
+                <Loader2 size={16} className="report-spin" />
                 Posting report…
               </>
             ) : (
               <>
-                <Send size={15} />
+                <Send size={16} />
                 Submit Incident
               </>
             )}

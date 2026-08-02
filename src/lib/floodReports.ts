@@ -1,3 +1,15 @@
+import {
+  Car,
+  Droplets,
+  Hospital,
+  LifeBuoy,
+  OctagonAlert,
+  PlugZap,
+  TreePine,
+  TriangleAlert,
+  Waves,
+  type LucideIcon
+} from "lucide-react";
 import type { SeverityLevel, IncidentType } from "./types";
 
 export const severityRank: Record<string, number> = {
@@ -106,16 +118,16 @@ export const severityMeta: Record<
   }
 };
 
-export const incidentTypeMeta: Record<IncidentType, { label: string; icon: string }> = {
-  "Flooded Road": { label: "Flooded Road", icon: "🚧" },
-  "Flooded Area": { label: "Flooded Area", icon: "🌊" },
-  "Fallen Tree": { label: "Fallen Tree", icon: "🌳" },
-  "Bridge Closed": { label: "Bridge Closed", icon: "⛔" },
-  "Landslide": { label: "Landslide", icon: "⛰️" },
-  "Vehicle Stuck": { label: "Vehicle Stuck", icon: "🚗" },
-  "Rescue Needed": { label: "Rescue Needed", icon: "🆘" },
-  "Medical Emergency": { label: "Medical Emergency", icon: "🏥" },
-  "Power Line Down": { label: "Power Line Down", icon: "⚡" }
+export const incidentTypeMeta: Record<IncidentType, { label: string; icon: LucideIcon }> = {
+  "Flooded Road": { label: "Flooded Road", icon: Waves },
+  "Flooded Area": { label: "Flooded Area", icon: Droplets },
+  "Fallen Tree": { label: "Fallen Tree", icon: TreePine },
+  "Bridge Closed": { label: "Bridge Closed", icon: OctagonAlert },
+  "Landslide": { label: "Landslide", icon: TriangleAlert },
+  "Vehicle Stuck": { label: "Vehicle Stuck", icon: Car },
+  "Rescue Needed": { label: "Rescue Needed", icon: LifeBuoy },
+  "Medical Emergency": { label: "Medical Emergency", icon: Hospital },
+  "Power Line Down": { label: "Power Line Down", icon: PlugZap }
 };
 
 export const severityColorMeta: Record<SeverityLevel, { label: string; color: string }> = {

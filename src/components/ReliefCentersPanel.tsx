@@ -39,7 +39,7 @@ export function ReliefCentersPanel({ centers, activeDistrictSlug }: ReliefCenter
             <p className="eyebrow">Shelter network</p>
             <h2>Relief centers</h2>
           </div>
-          <Building2 size={21} />
+          <Building2 size={20} />
         </div>
 
         <div className="filter-grid">

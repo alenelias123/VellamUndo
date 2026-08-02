@@ -13,6 +13,8 @@ import {
   useMap,
   useMapEvents
 } from "react-leaflet";
+import { Ban, MapPin, PenLine, X, type LucideIcon } from "lucide-react";
+import { iconSvg } from "@/lib/icons";
 import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
 import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
@@ -37,12 +39,14 @@ type FloodMapProps = {
   routeOrigin?: Coordinates;
   routeDestination?: Coordinates;
   routeMapPickMode?: "origin" | "destination" | null;
+  reportPinMode?: boolean;
   isDrawingStretch?: boolean;
   stretchStart?: Coordinates;
   stretchEnd?: Coordinates;
   stretchPath?: Coordinates[];
   onStretchChange?: (start: Coordinates, end: Coordinates) => void;
   onStretchPoint?: (point: Coordinates) => void;
+  onToggleStretchDrawing?: (active: boolean) => void;
   onSelectRoute?: (route: RouteOption) => void;
   onRoutePinMoved?: (mode: "origin" | "destination", coordinates: Coordinates) => void;
   pendingLocation?: Coordinates;
@@ -64,12 +68,14 @@ export function FloodMap({
   routeOrigin,
   routeDestination,
   routeMapPickMode = null,
+  reportPinMode = false,
   isDrawingStretch = false,
   stretchStart,
   stretchEnd,
   stretchPath,
   onStretchChange,
   onStretchPoint,
+  onToggleStretchDrawing,
   onSelectRoute,
   onRoutePinMoved,
   pendingLocation,
@@ -121,6 +127,12 @@ export function FloodMap({
       ) : null}
       {isDrawingStretch ? (
         <StretchDrawBadge hasStart={Boolean(stretchStart)} hasEnd={Boolean(stretchEnd)} />
+      ) : null}
+      {reportPinMode && onToggleStretchDrawing ? (
+        <ReportStretchToggle
+          isDrawingStretch={isDrawingStretch}
+          onToggle={onToggleStretchDrawing}
+        />
       ) : null}
 
       {/* Recenter / GPS refresh button */}
@@ -199,7 +211,7 @@ export function FloodMap({
             <br />
             <span>{routeOption.distanceKm} km · {routeOption.estimatedMinutes} min</span>
             {routeOption.analysis ? (
-              <span> · {isBlocked ? "🚫 BLOCKED" : `Risk: ${risk}`} ({routeOption.analysis.routeHealth}% health)</span>
+              <span> · {isBlocked ? <><Ban size={12} className="inline" /> BLOCKED</> : `Risk: ${risk}`} ({routeOption.analysis.routeHealth}% health)</span>
             ) : null}
           </Tooltip>
         );
@@ -248,7 +260,9 @@ export function FloodMap({
                   >
                     <Popup>
                       <div className="map-popup">
-                        <strong style={{ color: "#b91c1c" }}>🚫 Road Blocked</strong>
+                        <strong className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
+                          <Ban size={14} /> Road Blocked
+                        </strong>
                         <span>
                           {routeOption.analysis?.affectedIncidents
                             .filter(
@@ -437,7 +451,7 @@ export function FloodMap({
         .filter((inc) => inc.status !== "archived")
         .map((incident) => {
           const sevMeta = severityColorMeta[incident.severity];
-          const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: "📍" };
+          const typeMeta = incidentTypeMeta[incident.type] || { label: incident.type, icon: MapPin };
           const isSelected = incident.id === selectedIncidentId;
           const isIncidentOnSelectedRoute = activeRoute?.analysis?.affectedIncidents.some(
             (ai) => ai.id === incident.id
@@ -477,7 +491,7 @@ export function FloodMap({
                 <Popup>
                   <div className="map-popup">
                     <div className="flex items-center gap-1.5 font-bold text-sm">
-                      <span>{typeMeta.icon}</span>
+                      <typeMeta.icon size={14} className="shrink-0" />
                       <span>{incident.type}</span>
                     </div>
                     <span className="text-xs text-gray-500 font-semibold">{incident.roadName}</span>
@@ -489,7 +503,7 @@ export function FloodMap({
                       >
                         {sevMeta.label}
                       </span>
-                      <span className="text-xs font-bold text-blue-600">{incident.confidence}% match</span>
+                      <span className="text-xs font-bold text-teal-600">{incident.confidence}% match</span>
                     </div>
                   </div>
                 </Popup>
@@ -505,7 +519,7 @@ export function FloodMap({
           <Marker
             key={centerItem.id}
             position={toLatLng(centerItem.coordinates)}
-            icon={makeTextIcon("center", meta.label.slice(0, 1), meta.color)}
+            icon={makeIconMarker(meta.icon, meta.color, "center")}
           >
             <Popup>
               <div className="map-popup">
@@ -526,10 +540,10 @@ export function FloodMap({
           <Marker
             key={request.id}
             position={toLatLng(request.coordinates)}
-            icon={makeTextIcon(
-              "help",
-              helpTypeMeta[request.type].label.slice(0, 1),
-              priorityMeta[request.priority].color
+            icon={makeIconMarker(
+              helpTypeMeta[request.type].icon,
+              priorityMeta[request.priority].color,
+              "help"
             )}
           >
             <Popup>
@@ -611,6 +625,47 @@ function StretchDrawBadge({ hasStart, hasEnd }: { hasStart: boolean; hasEnd: boo
       badge.remove();
     };
   }, [map, hasStart, hasEnd]);
+  return null;
+}
+
+// ── Report stretch toggle (pin-drop sub-feature) ─────────────────────────────
+function ReportStretchToggle({
+  isDrawingStretch,
+  onToggle
+}: {
+  isDrawingStretch: boolean;
+  onToggle: (active: boolean) => void;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    const StretchCtrl = L.Control.extend({
+      onAdd() {
+        const wrap = L.DomUtil.create("div", "leaflet-bar leaflet-control vu-stretch-toggle");
+        const btn = L.DomUtil.create("button", `vu-stretch-toggle-btn${isDrawingStretch ? " vu-stretch-toggle-btn--active" : ""}`) as HTMLButtonElement;
+        btn.type = "button";
+        btn.title = isDrawingStretch
+          ? "Cancel tracing the flooded route"
+          : "Trace the flooded route length on the map";
+        btn.setAttribute("aria-pressed", String(isDrawingStretch));
+        btn.innerHTML = `
+          <span>${iconSvg(isDrawingStretch ? X : PenLine, { size: 14, color: isDrawingStretch ? "#0f3d3e" : "#ffffff" })}</span>
+          <span>${isDrawingStretch ? "Cancel tracing" : "Trace the Route"}</span>`;
+        L.DomEvent.on(btn, "click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          onToggle(!isDrawingStretch);
+        });
+        wrap.appendChild(btn);
+        return wrap;
+      },
+      onRemove() {}
+    });
+    const control = new StretchCtrl({ position: "bottomright" });
+    control.addTo(map);
+    return () => { control.remove(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isDrawingStretch, onToggle]);
+
   return null;
 }
 
@@ -774,7 +829,26 @@ function makeTextIcon(kind: "center" | "help" | "pending" | "stretch-start" | "s
   });
 }
 
-// Road-blocked pin — red octagon with 🚫
+// Colored ring pin with a lucide icon — same visual language as incident pins
+function makeIconMarker(icon: LucideIcon, color: string, kind: "center" | "help") {
+  const size = 34;
+  return L.divIcon({
+    className: `vu-map-icon vu-map-icon--${kind}`,
+    html: `<div style="
+      background:#ffffff;
+      border:2px solid ${color};
+      border-radius:50%;
+      width:${size}px;height:${size}px;
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 3px 8px rgba(0,0,0,0.18);
+    ">${iconSvg(icon, { size: 18, color })}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2]
+  });
+}
+
+// Road-blocked pin — red teardrop with a Ban icon
 function makeBlockageIcon() {
   return L.divIcon({
     className: "vu-blockage-icon",
@@ -796,13 +870,13 @@ function makeBlockageIcon() {
         <!-- Icon centred in the circle -->
         <span style="
           position: absolute;
-          top: 3px; left: 0;
-          width: 36px;
-          text-align: center;
-          font-size: 16px;
-          line-height: 30px;
+          top: 2px; left: 0;
+          width: 36px; height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           pointer-events: none;
-        ">🚫</span>
+        ">${iconSvg(Ban, { size: 18, color: "#ffffff" })}</span>
       </div>`,
     iconSize: [36, 42],
     iconAnchor: [18, 42],
@@ -845,13 +919,14 @@ function makeRouteEndpointIcon(kind: "origin" | "destination") {
 }
 
 function makeIncidentIcon(
-  emoji: string,
+  icon: LucideIcon,
   color: string,
   isSelected: boolean,
   isIncidentOnSelectedRoute?: boolean
 ) {
   const size = isSelected ? 40 : 32;
   const borderSize = isSelected ? "3px" : "2px";
+  const iconSize = isSelected ? 22 : 18;
   const shadow = isIncidentOnSelectedRoute
     ? `box-shadow:0 0 12px 6px ${color};`
     : `box-shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);`;
@@ -864,11 +939,10 @@ function makeIncidentIcon(
       border-radius:50%;
       width:${size}px;height:${size}px;
       display:flex;align-items:center;justify-content:center;
-      font-size:${isSelected ? "20px" : "16px"};
       ${shadow}
       transform:scale(${isSelected ? 1.15 : 1.0});
       transition:all 0.2s ease-out;
-    ">${emoji}</div>`,
+    ">${iconSvg(icon, { size: iconSize, color })}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2]

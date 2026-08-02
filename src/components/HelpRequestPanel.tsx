@@ -70,7 +70,7 @@ export function HelpRequestPanel({
             <p className="eyebrow">Emergency desk</p>
             <h2>Request help</h2>
           </div>
-          <LifeBuoy size={21} />
+          <LifeBuoy size={20} />
         </div>
 
         <form className="form-grid" onSubmit={handleSubmit}>
@@ -151,7 +151,7 @@ export function HelpRequestPanel({
           </label>
 
           <button className="primary-action span-2" type="submit">
-            <Send size={17} />
+            <Send size={18} />
             Create request
           </button>
         </form>

@@ -3,19 +3,17 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Ambulance,
   CircleDot,
   LogIn,
   LogOut,
-  MapPinned,
-  Navigation2,
+  MapPin,
+  Satellite,
   ShieldCheck,
   AlertTriangle,
   User,
   Search,
   SlidersHorizontal,
-  X,
-  ArrowLeft
+  X
 } from "lucide-react";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
@@ -23,8 +21,8 @@ import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
 import { AuthModal } from "@/components/AuthModal";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
 import { useAuth } from "@/hooks/useAuth";
-import { severityRank, severityColorMeta, incidentTypeMeta, formatRelativeTime } from "@/lib/floodReports";
-import type { Coordinates, RouteOption, Incident, SeverityLevel, IncidentType } from "@/lib/types";
+import { severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
+import type { Coordinates, RouteOption, Incident, SeverityLevel } from "@/lib/types";
 import { fetchRoadPath, type SearchResultPlace } from "@/lib/routing";
 
 const FloodMap = dynamic(
@@ -41,36 +39,7 @@ const FloodMap = dynamic(
 
 type ActivePanel = "report" | "route";
 
-const panelItems: Array<{
-  id: ActivePanel;
-  label: string;
-  icon: React.ComponentType<{ size?: number }>;
-}> = [
-  { id: "report", label: "Report", icon: MapPinned },
-  { id: "route",  label: "Route",  icon: Navigation2 }
-];
-
 const FALLBACK_CENTER_COORDS: Coordinates = { lat: 10.15, lng: 76.4 };
-
-const DISTRICT_CENTERS: Record<string, { lat: number; lng: number; zoom: number }> = {
-  all: { lat: 10.1605, lng: 76.6413, zoom: 8 },
-  ernakulam: { lat: 9.9816, lng: 76.2999, zoom: 11 },
-  thrissur: { lat: 10.5276, lng: 76.2144, zoom: 11 },
-  alappuzha: { lat: 9.4981, lng: 76.3388, zoom: 11 },
-  kottayam: { lat: 9.5916, lng: 76.5222, zoom: 11 },
-  pathanamthitta: { lat: 9.2648, lng: 76.7870, zoom: 11 },
-  idukki: { lat: 9.9189, lng: 77.1025, zoom: 10 },
-  kollam: { lat: 8.8932, lng: 76.6141, zoom: 11 },
-  kozhikode: { lat: 11.2588, lng: 75.7804, zoom: 11 },
-  kannur: { lat: 11.8745, lng: 75.3704, zoom: 11 },
-  kasaragod: { lat: 12.5103, lng: 74.9852, zoom: 11 },
-  malappuram: { lat: 11.0735, lng: 76.0740, zoom: 11 },
-  palakkad: { lat: 10.7867, lng: 76.6548, zoom: 11 },
-  wayanad: { lat: 11.6854, lng: 76.1320, zoom: 11 },
-  thiruvananthapuram: { lat: 8.5241, lng: 76.9366, zoom: 11 }
-};
-
-const districtsList = Object.keys(DISTRICT_CENTERS);
 
 export default function HomeClient() {
   const {
@@ -88,7 +57,7 @@ export default function HomeClient() {
 
   const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
 
-  const [activePanel, setActivePanel] = useState<ActivePanel>("report");
+  const [activePanel, setActivePanel] = useState<ActivePanel>("route");
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
@@ -136,14 +105,24 @@ export default function HomeClient() {
     return () => clearTimeout(timeout);
   }, [stretchStart, stretchEnd]);
 
-  // Filters (District, Combined map filters, Global Search)
-  const [selectedDistrict, setSelectedDistrict] = useState<string>("all");
-  const [filterTypes, setFilterTypes] = useState<string[]>([]);
+  // Filters (Combined map filters, Global Search)
   const [filterSeverities, setFilterSeverities] = useState<string[]>([]);
   const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSuggestions, setGlobalSuggestions] = useState<Incident[]>([]);
-  const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
+
+  // Close the filter popover when clicking outside it
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (filtersRef.current && !filtersRef.current.contains(event.target as Node)) {
+        setIsFiltersOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
   
   // Shared routing destination to trigger from search
   const [routingDestination, setRoutingDestination] = useState<SearchResultPlace | null>(null);
@@ -218,14 +197,6 @@ export default function HomeClient() {
 
   const filteredIncidents = useMemo(() => {
     return incidents.filter((inc) => {
-      // District filtering
-      if (selectedDistrict !== "all" && inc.district.toLowerCase() !== selectedDistrict.toLowerCase()) {
-        return false;
-      }
-      // Type filtering
-      if (filterTypes.length > 0 && !filterTypes.includes(inc.type)) {
-        return false;
-      }
       // Severity filtering
       if (filterSeverities.length > 0 && !filterSeverities.includes(inc.severity)) {
         return false;
@@ -240,62 +211,15 @@ export default function HomeClient() {
       }
       return true;
     });
-  }, [incidents, selectedDistrict, filterTypes, filterSeverities, filterStatus]);
-
-  // District Dashboard Statistics (Feature 8)
-  const districtDashboardStats = useMemo(() => {
-    const subset = incidents.filter(
-      (inc) => selectedDistrict === "all" || inc.district.toLowerCase() === selectedDistrict.toLowerCase()
-    );
-    const active = subset.filter((inc) => inc.status === "active" || inc.status === "receding");
-    
-    const blockedRoads = active.filter(
-      (inc) => inc.severity === "NOT_PASSABLE" || inc.severity === "WAIST_DEEP"
-    ).length;
-    
-    const bridgeClosures = active.filter((inc) => inc.type === "Bridge Closed").length;
-    const rescueRequests = active.filter((inc) => inc.type === "Rescue Needed" || inc.type === "Medical Emergency").length;
-
-    // Relative timestamp for last update
-    const times = subset.map((inc) => new Date(inc.updatedAt || inc.createdAt).getTime());
-    const lastUpdated = times.length > 0 ? formatRelativeTime(new Date(Math.max(...times)).toISOString()) : "never";
-
-    return {
-      activeCount: active.length,
-      blockedRoads,
-      bridgeClosures,
-      rescueRequests,
-      lastUpdated
-    };
-  }, [incidents, selectedDistrict]);
+  }, [incidents, filterSeverities, filterStatus]);
 
   const mapCenter = useMemo(() => {
     void recenterTrigger;
     if (selectedIncident) return { ...selectedIncident.coordinates, zoom: 12 };
-    if (pendingLocation) return { ...pendingLocation, zoom: 11 };
-    if (selectedDistrict !== "all") {
-      const center = DISTRICT_CENTERS[selectedDistrict];
-      return center ? { lat: center.lat, lng: center.lng, zoom: center.zoom } : FALLBACK_CENTER_COORDS;
-    }
+    if (pendingLocation) return { ...pendingLocation };
     if (userLocation) return { ...userLocation, zoom: 11 };
     return FALLBACK_CENTER_COORDS;
-  }, [selectedIncident, pendingLocation, selectedDistrict, userLocation, recenterTrigger]);
-
-  const severeIncidents = useMemo(() =>
-    [...filteredIncidents]
-      .filter((i) => i.status === "active" || i.status === "receding")
-      .sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || b.confidence - a.confidence)
-      .slice(0, 4),
-    [filteredIncidents]
-  );
-
-  const latestUpdates = useMemo(() =>
-    [...filteredIncidents]
-      .filter((i) => i.status !== "archived")
-      .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
-      .slice(0, 4),
-    [filteredIncidents]
-  );
+  }, [selectedIncident, pendingLocation, userLocation, recenterTrigger]);
 
   function handlePickLocation(coords: Coordinates) {
     if (activePanel === "route" && routeMapPickMode) {
@@ -346,7 +270,6 @@ export default function HomeClient() {
     setPendingLocation(undefined);
     setGlobalSearch("");
     setGlobalSuggestions([]);
-    setIsMobileSearchExpanded(false);
     
     // Highlight route by setting it as routing destination and switching panel
     setRoutingDestination({
@@ -356,12 +279,6 @@ export default function HomeClient() {
       coordinates: inc.coordinates
     });
     setActivePanel("route");
-  }
-
-  function toggleFilterType(type: string) {
-    setFilterTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-    );
   }
 
   function toggleFilterSeverity(sev: string) {
@@ -375,6 +292,8 @@ export default function HomeClient() {
       prev.includes(st) ? prev.filter((s) => s !== st) : [...prev, st]
     );
   }
+
+  const activeFilterCount = filterSeverities.length + filterStatus.length;
 
   return (
     <div className="app-shell">
@@ -390,144 +309,159 @@ export default function HomeClient() {
 
       {/* ── Topbar ────────────────────────────────────── */}
       <header className="topbar flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-slate-200 bg-white relative min-h-[72px]">
-        {/* If mobile search is expanded, render full-width search input */}
-        {isMobileSearchExpanded ? (
-          <div className="flex items-center w-full gap-2 z-[2000] animate-fadeIn">
-            <button
-              type="button"
-              className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition"
-              onClick={() => {
-                setIsMobileSearchExpanded(false);
-                setGlobalSearch("");
-                setGlobalSuggestions([]);
-              }}
-              aria-label="Back to topbar"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search roads, districts, landmarks..."
-                autoFocus
-                className="w-full pl-9 pr-9 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
-                value={globalSearch}
-                onChange={(e) => setGlobalSearch(e.target.value)}
-              />
-              {globalSearch && (
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  onClick={() => { setGlobalSearch(""); setGlobalSuggestions([]); }}
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-            {globalSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-lg shadow-xl z-[2000] text-sm overflow-hidden mx-4 animate-slideDown">
-                {globalSuggestions.map((inc) => (
-                  <button
-                    key={inc.id}
-                    type="button"
-                    className="w-full text-left px-4 py-3 hover:bg-slate-50 border-b border-slate-100 flex items-center gap-3 transition"
-                    onClick={() => handleSelectGlobalSuggestion(inc)}
-                  >
-                    <span className="text-lg">{incidentTypeMeta[inc.type]?.icon || "📍"}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-slate-800 truncate">{inc.roadName}</div>
-                      <div className="text-xs text-slate-500 truncate">{inc.landmark}, {inc.district}</div>
-                    </div>
-                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">{inc.confidence}% match</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Standard Brand Lockup */}
-            <div className="brand-lockup flex items-center gap-3">
-              <span className="brand-mark bg-slate-800 text-white rounded-lg p-2 flex items-center justify-center shrink-0">
+        {/* Standard Brand Lockup */}
+        <div className="brand-lockup flex items-center gap-3">
+              <span className="brand-mark rounded-lg flex items-center justify-center shrink-0">
                 <ShieldCheck size={20} />
               </span>
               <div className="leading-tight">
-                <p className="eyebrow text-[10px] tracking-wider text-slate-400 font-bold uppercase">Kerala flood response</p>
-                <h1 className="text-lg font-black text-slate-800">Vellam Undo</h1>
+                <h1>Vellam Undo</h1>
               </div>
             </div>
 
-            {/* Desktop Autocomplete Search - Hidden on Mobile */}
-            <div className="global-search-container relative flex-1 max-w-md mx-6 hidden md:block">
-              <div className="relative flex items-center">
-                <Search size={16} className="absolute left-3 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search roads, districts, landmarks or incident types..."
-                  className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={globalSearch}
-                  onChange={(e) => setGlobalSearch(e.target.value)}
-                />
-                {globalSearch && (
-                  <button
-                    type="button"
-                    className="absolute right-2 text-slate-400 hover:text-slate-600"
-                    onClick={() => { setGlobalSearch(""); setGlobalSuggestions([]); }}
-                  >
-                    <X size={14} />
-                  </button>
+            {/* Search + map filters */}
+            <div className="topbar-middle">
+              {/* Desktop Autocomplete Search - Hidden on Mobile */}
+              <div className="global-search-container relative hidden md:block">
+                <div className="header-search-wrap">
+                  <Search size={16} className="header-search-icon" />
+                  <input
+                    type="text"
+                    placeholder="Search roads, districts, landmarks or incident types..."
+                    className="header-search-input"
+                    value={globalSearch}
+                    onChange={(e) => setGlobalSearch(e.target.value)}
+                  />
+                  {globalSearch && (
+                    <button
+                      type="button"
+                      className="header-search-clear"
+                      onClick={() => { setGlobalSearch(""); setGlobalSuggestions([]); }}
+                      aria-label="Clear search"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {globalSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-[2000] text-sm overflow-hidden">
+                    {globalSuggestions.map((inc) => {
+                      const TypeIcon = incidentTypeMeta[inc.type]?.icon ?? MapPin;
+                      return (
+                        <button
+                          key={inc.id}
+                          type="button"
+                          className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 flex items-center gap-2"
+                          onClick={() => handleSelectGlobalSuggestion(inc)}
+                        >
+                          <span className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                            <TypeIcon size={14} />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-slate-800 truncate">{inc.roadName}</div>
+                            <div className="text-xs text-slate-500 truncate">{inc.landmark}, {inc.district}</div>
+                          </div>
+                          <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full shrink-0">{inc.confidence}% match</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-              {globalSuggestions.length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-[2000] text-sm overflow-hidden">
-                  {globalSuggestions.map((inc) => (
-                    <button
-                      key={inc.id}
-                      type="button"
-                      className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 flex items-center gap-2"
-                      onClick={() => handleSelectGlobalSuggestion(inc)}
-                    >
-                      <span>{incidentTypeMeta[inc.type]?.icon || "📍"}</span>
-                      <div className="flex-1">
-                        <div className="font-semibold text-slate-800">{inc.roadName}</div>
-                        <div className="text-xs text-slate-500">{inc.landmark}, {inc.district}</div>
+
+              {/* Combined map filters */}
+              <div className="header-filters" ref={filtersRef}>
+                <button
+                  type="button"
+                  className={`filter-toggle-btn${isFiltersOpen ? " filter-toggle-btn--open" : ""}`}
+                  onClick={() => setIsFiltersOpen((v) => !v)}
+                  aria-expanded={isFiltersOpen}
+                  aria-controls="filter-popover"
+                >
+                  <SlidersHorizontal size={14} />
+                  <span className="hidden sm:inline">Filters</span>
+                  {activeFilterCount > 0 && (
+                    <span className="filter-active-count">{activeFilterCount}</span>
+                  )}
+                </button>
+
+                {isFiltersOpen && (
+                  <div id="filter-popover" className="filter-popover" role="group" aria-label="Map filters">
+                    <div className="header-filter-group">
+                      <span className="header-filter-label">Severity</span>
+                      <div className="header-filter-chips">
+                        {Object.keys(severityColorMeta).map((sev) => {
+                          const active = filterSeverities.includes(sev);
+                          const meta = severityColorMeta[sev as SeverityLevel];
+                          return (
+                            <button
+                              key={sev}
+                              type="button"
+                              className={`header-filter-chip${active ? " header-filter-chip--active" : ""}`}
+                              style={active ? {
+                                backgroundColor: meta.color,
+                                borderColor: meta.color,
+                              } : {}}
+                              onClick={() => toggleFilterSeverity(sev)}
+                            >
+                              {meta.label}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <span className="text-xs font-bold text-blue-600">{inc.confidence}% match</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                    </div>
+
+                    <div className="header-filter-group">
+                      <span className="header-filter-label">Status</span>
+                      <div className="header-filter-chips">
+                        {["active", "receding", "resolved", "archived", "Needs Verification"].map((st) => {
+                          const active = filterStatus.includes(st);
+                          let activeChip = "header-chip-active";
+                          if (st === "Needs Verification") {
+                            activeChip = "header-chip-verify";
+                          } else if (st === "resolved") {
+                            activeChip = "header-chip-resolved";
+                          } else if (st === "archived") {
+                            activeChip = "header-chip-archived";
+                          } else if (st === "receding") {
+                            activeChip = "header-chip-receding";
+                          }
+                          return (
+                            <button
+                              key={st}
+                              type="button"
+                              className={`header-filter-chip${active ? ` ${activeChip} header-filter-chip--active` : ""}`}
+                              onClick={() => toggleFilterStatus(st)}
+                            >
+                              {st}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Right side controls */}
             <div className="topbar-controls flex items-center gap-2 md:gap-3">
-              {/* Mobile Search Toggle Button - Visible only on Mobile */}
-              <button
-                type="button"
-                className="md:hidden p-2 hover:bg-slate-100 rounded-full text-slate-600 transition"
-                onClick={() => setIsMobileSearchExpanded(true)}
-                aria-label="Expand search"
-              >
-                <Search size={20} />
-              </button>
-
               {offlineQueue.length > 0 && (
-                <div className="offline-badge flex items-center gap-1 text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2 py-1 rounded animate-pulse">
+                <div className="offline-badge">
                   <AlertTriangle size={12} />
                   <span className="hidden sm:inline">{offlineQueue.length} queued offline</span>
                   <span className="sm:hidden">{offlineQueue.length}</span>
                 </div>
               )}
               {isSyncing && (
-                <div className="syncing-badge flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded">
-                  <span className="syncing-dot bg-blue-600 w-2 h-2 rounded-full animate-ping" />
+                <div className="syncing-badge">
+                  <span className="syncing-dot" />
                   <span>Syncing…</span>
                 </div>
               )}
 
-              <div className="signal-pill flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 px-2.5 py-1 rounded-full text-xs font-bold">
-                <CircleDot size={12} className="text-green-500 fill-green-500 animate-pulse shrink-0" />
+              <div className="signal-pill">
+                <CircleDot size={12} className="text-teal-600 fill-teal-600 animate-pulse shrink-0" />
                 Live
               </div>
 
@@ -535,22 +469,24 @@ export default function HomeClient() {
               {authLoading ? null : user ? (
                 <button
                   type="button"
-                  className="topbar-auth-btn topbar-auth-btn--signed-in flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-slate-200 text-xs font-semibold hover:bg-slate-50 transition"
+                  className="topbar-auth-btn topbar-auth-btn--signed-in"
                   onClick={() => setAuthModalOpen(true)}
                   title={`Signed in as ${user.name}`}
                 >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
-                  ) : (
-                    <User size={12} />
-                  )}
-                  <span className="topbar-auth-name hidden sm:inline text-slate-700">{user.name.split(" ")[0]}</span>
-                  <LogOut size={12} className="text-slate-400 hover:text-slate-600" />
+                  <span className="topbar-avatar">
+                    {user.avatarUrl ? (
+                      <img src={user.avatarUrl} alt={user.name} className="topbar-avatar-img" referrerPolicy="no-referrer" />
+                    ) : (
+                      <User size={14} />
+                    )}
+                  </span>
+                  <span className="topbar-auth-name hidden sm:inline">{user.name.split(" ")[0]}</span>
+                  <LogOut size={12} className="topbar-auth-signout-icon" />
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="topbar-auth-btn topbar-auth-btn--signed-out flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                  className="topbar-auth-btn topbar-auth-btn--signed-out"
                   onClick={() => setAuthModalOpen(true)}
                 >
                   <LogIn size={13} />
@@ -558,27 +494,10 @@ export default function HomeClient() {
                 </button>
               )}
             </div>
-          </>
-        )}
-      </header>
+        </header>
 
       {/* ── Workspace ─────────────────────────────────── */}
       <main className="workspace">
-        <nav className="mode-rail" aria-label="Operations">
-          {panelItems.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className={activePanel === id && !selectedIncidentId ? "is-active" : ""}
-              onClick={() => { setSelectedIncidentId(undefined); setActivePanel(id); }}
-              title={label}
-            >
-              <Icon size={20} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </nav>
-
         <section className="map-stage" aria-label="Flood response map">
           {geoError && (
             <div className="absolute top-[88px] left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg z-[2000] text-xs font-semibold flex items-center gap-2 max-w-sm w-full mx-4 animate-slideDown">
@@ -586,10 +505,11 @@ export default function HomeClient() {
               <div className="flex-1 leading-normal">{geoError}</div>
               <button
                 type="button"
-                className="text-red-400 hover:text-red-600 font-bold ml-1 text-sm focus:outline-none"
+                className="text-red-400 hover:text-red-600 font-bold ml-1 focus:outline-none"
                 onClick={() => setGeoError(null)}
+                aria-label="Dismiss GPS error"
               >
-                ✕
+                <X size={14} />
               </button>
             </div>
           )}
@@ -619,203 +539,14 @@ export default function HomeClient() {
               onStretchChange={handleStretchChange}
               onStretchPoint={handleStretchPoint}
               stretchPath={stretchPath}
+              reportPinMode={activePanel === "report"}
+              onToggleStretchDrawing={handleToggleStretchDrawing}
             />
           </div>
 
           <div className="map-summary">
             <Metric label="Incidents Displayed" value={filteredIncidents.length} />
           </div>
-
-          {/* ── Map intel sidebar ──────────────────────── */}
-          <aside className="map-intel" aria-label="Flood intelligence">
-            {/* District Selector Filter (Feature 7) */}
-            <div className="intel-section district-filter-section bg-slate-50 p-3 rounded-lg border border-slate-200 mb-3">
-              <label className="block text-xs uppercase font-bold text-slate-500 mb-1">
-                Filter by District:
-              </label>
-              <select
-                className="w-full p-2 border border-slate-200 rounded text-sm bg-white"
-                value={selectedDistrict}
-                onChange={(e) => setSelectedDistrict(e.target.value)}
-              >
-                <option value="all">All Kerala (Statewide)</option>
-                {districtsList.filter(d => d !== "all").map((d) => (
-                  <option key={d} value={d}>
-                    {d.charAt(0).toUpperCase() + d.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* District Dashboard Stats (Feature 8) */}
-            <div className="intel-section district-dashboard bg-white p-3 rounded-lg border border-slate-200 mb-3 text-xs flex flex-col gap-2">
-              <h4 className="font-bold text-slate-800 uppercase tracking-wider mb-1 border-b border-slate-100 pb-1.5 flex justify-between items-center">
-                <span>📊 {selectedDistrict.charAt(0).toUpperCase() + selectedDistrict.slice(1)} Summary</span>
-                <span className="text-[10px] text-slate-400 lowercase italic font-normal">updated {districtDashboardStats.lastUpdated}</span>
-              </h4>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-2 bg-slate-50 border border-slate-100 rounded text-center">
-                  <div className="text-lg font-black text-slate-700">{districtDashboardStats.activeCount}</div>
-                  <div className="text-[10px] text-slate-400 uppercase font-bold">Active Cases</div>
-                </div>
-                <div className="p-2 bg-red-50 border border-red-100 rounded text-center">
-                  <div className="text-lg font-black text-red-600">{districtDashboardStats.blockedRoads}</div>
-                  <div className="text-[10px] text-red-400 uppercase font-bold">Blocked Roads</div>
-                </div>
-                <div className="p-2 bg-amber-50 border border-amber-100 rounded text-center">
-                  <div className="text-lg font-black text-amber-600">{districtDashboardStats.bridgeClosures}</div>
-                  <div className="text-[10px] text-amber-400 uppercase font-bold">Bridge Closures</div>
-                </div>
-                <div className="p-2 bg-blue-50 border border-blue-100 rounded text-center">
-                  <div className="text-lg font-black text-blue-600">{districtDashboardStats.rescueRequests}</div>
-                  <div className="text-[10px] text-blue-400 uppercase font-bold">Rescue/Emergency</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Redesigned Combined Filters (Feature 9) */}
-            <div className="intel-section map-filters-section bg-white/95 backdrop-blur-md p-4 rounded-xl border border-slate-200 shadow-md mb-3 text-xs flex flex-col gap-4">
-              <h4 className="font-bold text-slate-800 text-sm tracking-wide flex items-center gap-1.5 border-b border-slate-100 pb-2">
-                <SlidersHorizontal size={14} className="text-teal-600 animate-pulse" /> Combined Map Filters
-              </h4>
-              
-              <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Hazard Type:</span>
-                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
-                  {Object.keys(incidentTypeMeta).map((type) => {
-                    const active = filterTypes.includes(type);
-                    const meta = incidentTypeMeta[type as IncidentType];
-                    return (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => toggleFilterType(type)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all duration-200 hover:scale-105 active:scale-95 ${
-                          active
-                            ? "bg-teal-700 text-white border-teal-700 shadow-sm"
-                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                        }`}
-                      >
-                        <span>{meta?.icon}</span>
-                        <span>{type}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Severity:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.keys(severityColorMeta).map((sev) => {
-                    const active = filterSeverities.includes(sev);
-                    const meta = severityColorMeta[sev as SeverityLevel];
-                    return (
-                      <button
-                        key={sev}
-                        type="button"
-                        className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all duration-200 hover:scale-105 active:scale-95 border ${
-                          active
-                            ? "text-white shadow-sm"
-                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                        }`}
-                        style={active ? {
-                          backgroundColor: meta.color,
-                          borderColor: meta.color,
-                        } : {}}
-                        onClick={() => toggleFilterSeverity(sev)}
-                      >
-                        {meta.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <span className="block font-bold text-slate-500 uppercase tracking-wider mb-2">Status:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {["active", "receding", "resolved", "archived", "Needs Verification"].map((st) => {
-                    const active = filterStatus.includes(st);
-                    let activeClass = "bg-slate-800 text-white border-slate-800";
-                    if (st === "Needs Verification") {
-                      activeClass = "bg-amber-600 text-white border-amber-600";
-                    } else if (st === "resolved") {
-                      activeClass = "bg-green-600 text-white border-green-600";
-                    } else if (st === "archived") {
-                      activeClass = "bg-slate-500 text-white border-slate-500";
-                    } else if (st === "receding") {
-                      activeClass = "bg-sky-600 text-white border-sky-600";
-                    }
-                    return (
-                      <button
-                        key={st}
-                        type="button"
-                        className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all duration-200 hover:scale-105 active:scale-95 border ${
-                          active
-                            ? activeClass
-                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                        }`}
-                        onClick={() => toggleFilterStatus(st)}
-                      >
-                        {st}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="intel-section">
-              <div className="section-heading">
-                <div><p className="eyebrow">Priority Areas</p><h2>Watch list</h2></div>
-                <Ambulance size={18} style={{ color: "var(--red)" }} />
-              </div>
-              {severeIncidents.length === 0 ? (
-                <p className="muted" style={{ padding: "6px 0", fontSize: "0.78rem" }}>No active priority hazards.</p>
-              ) : severeIncidents.map((inc) => {
-                const meta = incidentTypeMeta[inc.type] ?? { icon: "📍", label: inc.type };
-                const color = severityColorMeta[inc.severity]?.color ?? "#7f7f7f";
-                return (
-                  <button key={inc.id} type="button" className="intel-row"
-                    onClick={() => { setSelectedIncidentId(inc.id); setPendingLocation(undefined); }}>
-                    <span className="severity-dot" style={{ background: color }} />
-                    <span>
-                      <strong>{inc.roadName}</strong>
-                      <small>{meta.icon} {inc.type}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="intel-section">
-              <div className="section-heading">
-                <div><p className="eyebrow">Incident Feed</p><h2>Latest updates</h2></div>
-              </div>
-              {latestUpdates.map((inc) => {
-                const color = severityColorMeta[inc.severity]?.color ?? "#7f7f7f";
-                const verifCount = inc.verifications?.length ?? 0;
-                return (
-                  <button key={inc.id} type="button" className="intel-row"
-                    onClick={() => { setSelectedIncidentId(inc.id); setPendingLocation(undefined); }}>
-                    <span className="severity-dot" style={{ background: color }} />
-                    <span>
-                      <strong>
-                        {inc.roadName}
-                        {verifCount >= 2 && (
-                          <span className="intel-verified-tick" title="Community verified"> ✓</span>
-                        )}
-                      </strong>
-                      <small>
-                        {new Date(inc.updatedAt || inc.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </aside>
         </section>
 
         {/* ── Operations panel ──────────────────────────── */}
@@ -840,10 +571,10 @@ export default function HomeClient() {
                   onPickLocation={handlePickLocation}
                   onSubmit={addReport}
                   onResetDemoData={resetDemoData}
+                  onBack={() => { setPendingLocation(undefined); setActivePanel("route"); }}
                   isDrawingStretch={isDrawingStretch}
                   stretchStart={stretchStart}
                   stretchEnd={stretchEnd}
-                  onToggleStretchDrawing={handleToggleStretchDrawing}
                   onStretchChange={handleStretchChange}
                   onStretchReset={() => {
                     setStretchStart(undefined);
@@ -864,6 +595,7 @@ export default function HomeClient() {
                   onDestinationSelect={setRoutingDestination}
                   onRouteChange={handleRouteChange}
                   onRoutesCalculated={setRoutesList}
+                  onOpenReport={() => { setSelectedIncidentId(undefined); setActivePanel("report"); }}
                   mapPickMode={routeMapPickMode}
                   mapPickedLocation={routeMapPickedLocation}
                   onMapPickModeChange={setRouteMapPickMode}
@@ -881,9 +613,9 @@ export default function HomeClient() {
       {/* ── GPS status bar ────────────────────────────── */}
       <div className="gps-status-bar">
         {gpsLoading
-          ? "🛰 Acquiring GPS…"
+          ? <><Satellite size={14} className="inline" /> Acquiring GPS…</>
           : userLocation
-          ? `GPS live · ${userLocation.lat}, ${userLocation.lng}`
+          ? <>GPS live · {userLocation.lat}, {userLocation.lng}</>
           : geoError ?? "Fetching GPS…"}
       </div>
     </div>
