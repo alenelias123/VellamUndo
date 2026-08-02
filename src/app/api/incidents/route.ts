@@ -1,6 +1,39 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import type { Incident, IncidentReport, IncidentVerification, SeverityLevel } from "@/lib/types";
+import type { Coordinates, Incident, IncidentReport, IncidentVerification, SeverityLevel } from "@/lib/types";
+
+// ── Flood stretch path serialisation ─────────────────────────────────────────
+// Stored as a jsonb array of { lat, lng } in the `flood_path` column. When the
+// cloud database has not been migrated yet we fall back to encoding the path
+// inside the landmark text as "[PATH:lat,lng;lat,lng;...]".
+function normalizeStretchPath(value: any): Coordinates[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value
+    .map((p: any) => {
+      const lat = Number(p?.lat ?? p?.[0]);
+      const lng = Number(p?.lng ?? p?.[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat, lng } as Coordinates;
+    })
+    .filter((p: Coordinates | null): p is Coordinates => p !== null);
+  return points.length > 1 ? points : undefined;
+}
+
+function encodeStretchPath(path: Coordinates[]): string {
+  return path.map((c) => `${c.lat},${c.lng}`).join(";");
+}
+
+function decodeStretchPath(encoded: string): Coordinates[] | undefined {
+  const points = encoded
+    .split(";")
+    .map((pair) => {
+      const [lat, lng] = pair.split(",").map(Number);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat, lng } as Coordinates;
+    })
+    .filter((p: Coordinates | null): p is Coordinates => p !== null);
+  return points.length > 1 ? points : undefined;
+}
 
 // Helper for Haversine distance
 function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -139,6 +172,7 @@ export async function GET() {
       let floodEndLng = db.flood_end_lng;
       let landmarkText = db.landmark || "";
       let elevationMeters = db.elevation_meters ?? undefined;
+      let floodStretchPath = normalizeStretchPath(db.flood_path);
 
       if (!floodStartLat && db.landmark) {
         const match = db.landmark.match(/\[STRETCH:([\d.-]+),([\d.-]+);([\d.-]+),([\d.-]+)\]/);
@@ -148,6 +182,14 @@ export async function GET() {
           floodEndLat = Number(match[3]);
           floodEndLng = Number(match[4]);
           landmarkText = db.landmark.replace(/\[STRETCH:[\d.-]+,[\d.-]+;[\d.-]+,[\d.-]+\]/, "").trim();
+        }
+      }
+
+      if (!floodStretchPath && db.landmark) {
+        const pathMatch = db.landmark.match(/\[PATH:([^\][\s]+)\]/);
+        if (pathMatch) {
+          floodStretchPath = decodeStretchPath(pathMatch[1]);
+          landmarkText = landmarkText.replace(/\[PATH:[^\][\s]+\]/, "").trim();
         }
       }
 
@@ -181,7 +223,8 @@ export async function GET() {
         floodStartLat: floodStartLat || undefined,
         floodStartLng: floodStartLng || undefined,
         floodEndLat: floodEndLat || undefined,
-        floodEndLng: floodEndLng || undefined
+        floodEndLng: floodEndLng || undefined,
+        floodStretchPath
       };
     });
 
@@ -214,7 +257,8 @@ export async function POST(request: Request) {
       floodStartLat,
       floodStartLng,
       floodEndLat,
-      floodEndLng
+      floodEndLng,
+      floodStretchPath
     } = body;
 
     if (!latitude || !longitude || !severity || !type || !roadName || !landmark || !district) {
@@ -272,6 +316,7 @@ export async function POST(request: Request) {
       if (floodStartLng !== undefined) insertRow.flood_start_lng = floodStartLng;
       if (floodEndLat !== undefined) insertRow.flood_end_lat = floodEndLat;
       if (floodEndLng !== undefined) insertRow.flood_end_lng = floodEndLng;
+      if (floodStretchPath !== undefined) insertRow.flood_path = floodStretchPath;
 
       let { data: newInc, error: errNewInc } = await supabase
         .from("incidents")
@@ -286,9 +331,13 @@ export async function POST(request: Request) {
         delete fallbackRow.flood_start_lng;
         delete fallbackRow.flood_end_lat;
         delete fallbackRow.flood_end_lng;
+        delete fallbackRow.flood_path;
         if (elevationMeters !== undefined) fallbackRow.landmark = `${fallbackRow.landmark || ""} [ELEV:${elevationMeters}]`;
         if (floodStartLat && floodStartLng && floodEndLat && floodEndLng) {
           fallbackRow.landmark = `${fallbackRow.landmark || ""} [STRETCH:${floodStartLat},${floodStartLng};${floodEndLat},${floodEndLng}]`;
+        }
+        if (Array.isArray(floodStretchPath) && floodStretchPath.length > 1) {
+          fallbackRow.landmark = `${fallbackRow.landmark || ""} [PATH:${encodeStretchPath(floodStretchPath)}]`;
         }
         const { data: fbInc, error: fbErr } = await supabase
           .from("incidents")
