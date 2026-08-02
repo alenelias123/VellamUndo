@@ -22,7 +22,7 @@ export function VolunteerDashboard({ requests, onUpdateStatus }: VolunteerDashbo
             <p className="eyebrow">Volunteer ops</p>
             <h2>Dispatch board</h2>
           </div>
-          <ClipboardList size={21} />
+          <ClipboardList size={20} />
         </div>
 
         <label>

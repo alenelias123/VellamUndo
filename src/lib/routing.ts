@@ -497,7 +497,7 @@ function buildOfflineNotice(
   const analysis = analyzeRoute(coords, incidents, distanceKm, baseMin);
   return {
     id: "offline-estimate",
-    name: "⚠ Offline Estimate (No Road Data)",
+    name: "Offline Estimate (No Road Data)",
     summary: "Routing service unreachable. Straight-line distance only — not a real road path.",
     coordinates: coords,
     distanceKm,

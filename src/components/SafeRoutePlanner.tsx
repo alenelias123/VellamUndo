@@ -15,11 +15,13 @@ import {
   LocateFixed,
   MapPin,
   Navigation2,
+  Plus,
   Route,
   Search,
   ShieldCheck,
   X
 } from "lucide-react";
+import { incidentTypeMeta } from "@/lib/floodReports";
 import {
   calculateRoadRoutes,
   haversineDistanceKm,
@@ -37,6 +39,7 @@ type SafeRoutePlannerProps = {
   onRouteChange: (route?: RouteOption) => void;
   onRoutesCalculated?: (routes: RouteOption[]) => void;
   onSelectIncident?: (id: string) => void;
+  onOpenReport?: () => void;
   mapPickMode?: "origin" | "destination" | null;
   mapPickedLocation?: { mode: "origin" | "destination"; coordinates: Coordinates; token: number } | null;
   onMapPickModeChange?: (mode: "origin" | "destination" | null) => void;
@@ -54,6 +57,7 @@ export function SafeRoutePlanner({
   onRouteChange,
   onRoutesCalculated,
   onSelectIncident,
+  onOpenReport,
   mapPickMode = null,
   mapPickedLocation = null,
   onMapPickModeChange,
@@ -413,12 +417,12 @@ export function SafeRoutePlanner({
             <strong className="route-card2-name">{option.name}</strong>
             {availableIndex === 0 && !isBlocked ? (
               <span className="route-recommended-badge">
-                <ShieldCheck size={10} /> Recommended
+                <ShieldCheck size={12} /> Recommended
               </span>
             ) : null}
             {isBlocked ? (
               <span className="route-blocked-badge">
-                <Ban size={10} /> Impassable
+                <Ban size={12} /> Impassable
               </span>
             ) : null}
             {isPrimaryBlockedRoute ? (
@@ -472,19 +476,23 @@ export function SafeRoutePlanner({
           <div className="route-affected-incidents">
             <span className="route-affected-label">Hazards on this route:</span>
             <div className="route-affected-chips">
-              {analysis.affectedIncidents.map((inc) => (
-                <button
-                  key={inc.id}
-                  type="button"
-                  className="route-incident-chip"
-                  onClick={() => onSelectIncident?.(inc.id)}
-                >
-                  📍 {inc.roadName}
-                  <span className="route-incident-severity">
-                    {inc.severity.replace(/_/g, " ").toLowerCase()}
-                  </span>
-                </button>
-              ))}
+              {analysis.affectedIncidents.map((inc) => {
+                const TypeIcon = incidentTypeMeta[inc.type]?.icon ?? MapPin;
+                return (
+                  <button
+                    key={inc.id}
+                    type="button"
+                    className="route-incident-chip"
+                    onClick={() => onSelectIncident?.(inc.id)}
+                  >
+                    <TypeIcon size={12} className="shrink-0" />
+                    {inc.roadName}
+                    <span className="route-incident-severity">
+                      {inc.severity.replace(/_/g, " ").toLowerCase()}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -497,7 +505,7 @@ export function SafeRoutePlanner({
               className={`route-view-btn ${isSelected ? "route-view-btn--active" : ""}`}
               onClick={() => onRouteChange(option)}
             >
-              {isSelected ? <><CheckCircle2 size={13} /> Viewing</> : "View on Map"}
+              {isSelected ? <><CheckCircle2 size={14} /> Viewing</> : "View on Map"}
             </button>
 
             <div className="route-nav-menu-wrap">
@@ -507,7 +515,7 @@ export function SafeRoutePlanner({
                 onClick={() => setOpenNavMenuId(openNavMenuId === option.id ? null : option.id)}
                 title="Open in navigation app"
               >
-                <ExternalLink size={13} />
+                <ExternalLink size={14} />
               </button>
               {openNavMenuId === option.id ? (
                 <div className="route-nav-dropdown">
@@ -518,7 +526,7 @@ export function SafeRoutePlanner({
                     Organic Maps
                   </button>
                   <button type="button" onClick={() => { handleCopyCoordinates(option); setOpenNavMenuId(null); }}>
-                    <span>Copy Coords</span><Copy size={10} />
+                    <span>Copy Coords</span><Copy size={12} />
                   </button>
                 </div>
               ) : null}
@@ -551,23 +559,22 @@ export function SafeRoutePlanner({
         <div className="route-header-actions">
           <button
             type="button"
+            className="route-report-btn"
+            onClick={onOpenReport}
+            title="Report an incident on the map"
+          >
+            <Plus size={14} />
+            <span>Report</span>
+          </button>
+          <button
+            type="button"
             className="top-gps-btn"
             onClick={() => { void useGpsAsSource(); }}
             disabled={!userLocation}
             title="Set current GPS location as starting address"
           >
             <LocateFixed size={14} />
-            <span>Use GPS</span>
-          </button>
-          <button
-            type="button"
-            className="top-swap-btn"
-            onClick={() => { void swapSourceDestination(); }}
-            disabled={!origin || !selectedDestination}
-            title="Swap starting location and destination"
-          >
-            <ArrowUpDown size={14} />
-            <span>Swap</span>
+            <span>Your Location</span>
           </button>
         </div>
       </div>
@@ -627,7 +634,7 @@ export function SafeRoutePlanner({
                 onClick={() => toggleMapPickMode("origin")}
                 title="Pick starting location on map"
               >
-                <MapPin size={13} />
+                <MapPin size={14} />
                 <span>Map</span>
               </button>
             </div>
@@ -643,7 +650,7 @@ export function SafeRoutePlanner({
                     className={`route-suggestion-item ${origin$.highlightedIndex === idx ? "is-highlighted" : ""}`}
                     onClick={() => selectOrigin(r)}
                   >
-                    <MapPin size={13} className="route-suggestion-icon route-suggestion-icon--origin" />
+                    <MapPin size={14} className="route-suggestion-icon route-suggestion-icon--origin" />
                     <div className="route-suggestion-text">
                       <strong>{r.name}</strong>
                       <small>{r.fullName}</small>
@@ -723,7 +730,7 @@ export function SafeRoutePlanner({
                 onClick={() => toggleMapPickMode("destination")}
                 title="Pick destination location on map"
               >
-                <MapPin size={13} />
+                <MapPin size={14} />
                 <span>Map</span>
               </button>
             </div>
@@ -739,7 +746,7 @@ export function SafeRoutePlanner({
                     className={`route-suggestion-item ${dest.highlightedIndex === idx ? "is-highlighted" : ""}`}
                     onClick={() => { void selectDestination(r); }}
                   >
-                    <MapPin size={13} className="route-suggestion-icon route-suggestion-icon--dest" />
+                    <MapPin size={14} className="route-suggestion-icon route-suggestion-icon--dest" />
                     <div className="route-suggestion-text">
                       <strong>{r.name}</strong>
                       <small>{r.fullName}</small>
@@ -788,12 +795,12 @@ export function SafeRoutePlanner({
 
         {isCalculating ? (
           <div className="route-calculating">
-            <Loader2 size={15} className="report-spin" />
+            <Loader2 size={16} className="report-spin" />
             <span>Analyzing flood paths and safety metrics…</span>
           </div>
         ) : routes.length === 0 ? (
           <div className="route-empty-state">
-            <Navigation2 size={28} strokeWidth={1.5} />
+            <Navigation2 size={24} strokeWidth={1.5} />
             <p>Search a destination above to compute flood-safe driving routes.</p>
           </div>
         ) : (() => {
@@ -815,7 +822,7 @@ export function SafeRoutePlanner({
               {isPrimaryRouteBlocked && primaryRoute ? (
                 <div className="route-primary-blocked-callout">
                   <span className="route-primary-blocked-title">
-                    <Ban size={13} /> Fastest direct route is flooded/blocked
+                    <Ban size={14} /> Fastest direct route is flooded/blocked
                   </span>
                   <span className="route-primary-blocked-meta">
                     {primaryRoute.name} · {primaryRoute.distanceKm} km · {primaryRoute.estimatedMinutes} min
@@ -836,7 +843,7 @@ export function SafeRoutePlanner({
               {available.length > 0 ? (
                 <>
                   <div className="route-section-label route-section-label--available">
-                    <CheckCircle2 size={13} />
+                    <CheckCircle2 size={14} />
                     {available.length} Available Route{available.length > 1 ? "s" : ""}
                   </div>
                   {available.map((option, index) => renderRouteCard(option, index, false))}
@@ -852,7 +859,7 @@ export function SafeRoutePlanner({
               {blocked.length > 0 ? (
                 <>
                   <div className="route-section-label route-section-label--blocked">
-                    <Ban size={13} />
+                    <Ban size={14} />
                     {blocked.length} Blocked / Impassable Route{blocked.length > 1 ? "s" : ""}
                   </div>
                   {blockedSorted.map((option) =>
@@ -893,7 +900,7 @@ export function SafeRoutePlanner({
                             ].join(" ")}
                           >
                             <td className="route-compare-name">
-                              {isRouteBlocked ? "🚫 " : ""}{r.name}
+                              {isRouteBlocked ? <Ban size={14} className="inline" /> : ""}{r.name}
                             </td>
                             <td>{r.distanceKm} km</td>
                             <td>{r.estimatedMinutes} m</td>

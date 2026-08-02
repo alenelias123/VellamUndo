@@ -1,6 +1,6 @@
 "use client";
 
-import { LogIn, LogOut, ShieldCheck, User, X } from "lucide-react";
+import { BadgeCheck, CheckCircle2, Lock, LogIn, LogOut, ShieldCheck, User, X } from "lucide-react";
 import type { AuthUser } from "@/hooks/useAuth";
 
 type AuthModalProps = {
@@ -34,7 +34,7 @@ export function AuthModal({
         {/* Header */}
         <div className="modal-header">
           <div className="header-title">
-            <ShieldCheck size={22} className="text-teal-700" />
+            <ShieldCheck size={20} className="text-teal-700" />
             <h3>{user ? "Signed In" : "Sign In to Verify"}</h3>
           </div>
           <button type="button" className="close-btn" onClick={onClose} aria-label="Close">
@@ -60,7 +60,7 @@ export function AuthModal({
                 />
               ) : (
                 <div className="auth-avatar auth-avatar--placeholder">
-                  <User size={22} />
+                  <User size={20} />
                 </div>
               )}
               <div>
@@ -68,7 +68,7 @@ export function AuthModal({
                 <p className="auth-user-email">{user.email}</p>
                 {user.isReal ? (
                   <span className="auth-verified-tag">
-                    <ShieldCheck size={11} /> Google verified
+                    <ShieldCheck size={12} /> Google verified
                   </span>
                 ) : (
                   <span className="auth-demo-tag">Demo session</span>
@@ -77,11 +77,11 @@ export function AuthModal({
             </div>
 
             <p className="auth-capability-note">
-              ✅ You can now verify flood reports and help emergency teams keep information accurate.
+              <CheckCircle2 size={14} className="inline" /> You can now verify flood reports and help emergency teams keep information accurate.
             </p>
 
             <button type="button" className="auth-signout-btn" onClick={() => { onSignOut(); onClose(); }}>
-              <LogOut size={15} />
+              <LogOut size={16} />
               Sign out
             </button>
           </div>
@@ -95,15 +95,21 @@ export function AuthModal({
 
             <div className="auth-feature-list">
               <div className="auth-feature-row">
-                <span className="auth-feature-icon auth-feature-icon--yes">✅</span>
+                <span className="auth-feature-icon auth-feature-icon--yes">
+                  <CheckCircle2 size={14} />
+                </span>
                 <span>Anyone can submit flood reports</span>
               </div>
               <div className="auth-feature-row">
-                <span className="auth-feature-icon auth-feature-icon--lock">🔒</span>
+                <span className="auth-feature-icon auth-feature-icon--lock">
+                  <Lock size={14} />
+                </span>
                 <span>Verification requires sign-in</span>
               </div>
               <div className="auth-feature-row">
-                <span className="auth-feature-icon auth-feature-icon--yes">🏅</span>
+                <span className="auth-feature-icon auth-feature-icon--yes">
+                  <BadgeCheck size={14} />
+                </span>
                 <span>Verified reports show a trust badge</span>
               </div>
             </div>

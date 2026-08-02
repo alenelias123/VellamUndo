@@ -2,22 +2,30 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  BadgeCheck,
   CheckCircle2,
   CheckSquare,
   Clock,
+  History,
   Loader2,
   Lock,
   LogIn,
+  Megaphone,
   Pencil,
   Save,
   ShieldCheck,
   Trash2,
+  TrendingDown,
+  TrendingUp,
   Users,
+  Waves,
   X,
   Edit,
   AlertTriangle,
   HelpCircle,
-  Clock3
+  Clock3,
+  MapPin,
+  type LucideIcon
 } from "lucide-react";
 import { formatRelativeTime, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import type { AuthUser } from "@/hooks/useAuth";
@@ -42,19 +50,28 @@ const incidentTypeOptions = Object.keys(incidentTypeMeta) as IncidentType[];
 const severityOptions = Object.keys(severityColorMeta) as SeverityLevel[];
 const statusOptions: IncidentStatus[] = ["active", "receding", "resolved", "archived"];
 
+function shortRelativeTime(iso: string): string {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
 const voteOptions: Array<{
   id: VerificationVote;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   bg: string;
   text: string;
   border: string;
 }> = [
-  { id: "still-flooded",   label: "Still Flooded",   icon: "🌊", bg: "#eff6ff", text: "#1e40af", border: "#bfdbfe" },
-  { id: "water-rising",    label: "Water Rising",    icon: "📈", bg: "#fffbeb", text: "#92400e", border: "#fde68a" },
-  { id: "water-receding",  label: "Water Receding",  icon: "📉", bg: "#f0fdfa", text: "#134e4a", border: "#99f6e4" },
-  { id: "road-cleared",    label: "Road Cleared",    icon: "✅", bg: "#f0fdf4", text: "#166534", border: "#bbf7d0" },
-  { id: "false-report",    label: "False Report",    icon: "❌", bg: "#fff1f2", text: "#9f1239", border: "#fecdd3" }
+  { id: "still-flooded",   label: "Still Flooded",   icon: Waves,       bg: "#eff6ff", text: "#1e40af", border: "#bfdbfe" },
+  { id: "water-rising",    label: "Water Rising",    icon: TrendingUp,  bg: "#fffbeb", text: "#92400e", border: "#fde68a" },
+  { id: "water-receding",  label: "Water Receding",  icon: TrendingDown, bg: "#f0fdfa", text: "#134e4a", border: "#99f6e4" },
+  { id: "road-cleared",    label: "Road Cleared",    icon: BadgeCheck,  bg: "#f0fdf4", text: "#166534", border: "#bbf7d0" },
+  { id: "false-report",    label: "False Report",    icon: X,           bg: "#fff1f2", text: "#9f1239", border: "#fecdd3" }
 ];
 
 type TimelineEvent = {
@@ -130,7 +147,7 @@ export function IncidentDetailsDrawer({
     } catch {}
   }, [incident]);
 
-  const typeMeta = incidentTypeMeta[incident.type] ?? { label: incident.type, icon: "📍" };
+  const typeMeta = incidentTypeMeta[incident.type] ?? { label: incident.type, icon: MapPin };
   const sevMeta = severityColorMeta[incident.severity];
 
   const voteCounts = useMemo(() => {
@@ -172,7 +189,7 @@ export function IncidentDetailsDrawer({
         color: "#b91c1c",
         bg: "#fef2f2",
         border: "#fca5a5",
-        icon: "⚠️"
+        icon: AlertTriangle
       };
     }
     if (elapsedHours < 0.5) {
@@ -181,7 +198,7 @@ export function IncidentDetailsDrawer({
         color: "#16a34a",
         bg: "#f0fdf4",
         border: "#bbf7d0",
-        icon: "🟢"
+        icon: BadgeCheck
       };
     }
     if (elapsedHours < 3) {
@@ -190,7 +207,7 @@ export function IncidentDetailsDrawer({
         color: "#0d9488",
         bg: "#f0fdfa",
         border: "#99f6e4",
-        icon: "🔵"
+        icon: Clock3
       };
     }
     if (elapsedHours < 12) {
@@ -199,7 +216,7 @@ export function IncidentDetailsDrawer({
         color: "#d97706",
         bg: "#fffbeb",
         border: "#fef3c7",
-        icon: "🟡"
+        icon: Clock
       };
     }
     return {
@@ -207,7 +224,7 @@ export function IncidentDetailsDrawer({
       color: "#4b5563",
       bg: "#f9fafb",
       border: "#e5e7eb",
-      icon: "⚪"
+      icon: Clock
     };
   }, [incident.updatedAt, incident.createdAt, incident.needsVerification]);
 
@@ -300,7 +317,6 @@ export function IncidentDetailsDrawer({
       totalReports,
       uniqueUsers,
       volunteerVerified: hasVolunteer,
-      lastUpdatedText: formatRelativeTime(incident.updatedAt || incident.createdAt),
       confidence: incident.confidence
     };
   }, [incident, sevMeta]);
@@ -398,7 +414,7 @@ export function IncidentDetailsDrawer({
       <div className="incident-drawer-header">
         <div className="incident-drawer-title">
           <div className="incident-type-eyebrow">
-            <span>{typeMeta.icon}</span>
+            <typeMeta.icon size={14} className="shrink-0" />
             <span>{incident.type}</span>
           </div>
           <h2>{incident.roadName}</h2>
@@ -420,7 +436,7 @@ export function IncidentDetailsDrawer({
             border: `1px solid ${freshness.border}`
           }}
         >
-          {freshness.icon} {freshness.label}
+          {<freshness.icon size={12} />} {freshness.label}
         </span>
 
         <span className="incident-severity-badge" style={{ background: sevMeta.color }}>
@@ -445,7 +461,7 @@ export function IncidentDetailsDrawer({
           <div className="incident-manage-bar mb-3 flex gap-2">
             <button
               type="button"
-              className="incident-manage-btn flex items-center gap-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded px-2.5 py-1 text-slate-700"
+              className="incident-manage-btn flex items-center gap-1 text-xs font-semibold bg-white hover:bg-teal-50 border border-teal-200 rounded px-2.5 py-1 text-teal-800"
               onClick={startEditing}
             >
               <Pencil size={12} />
@@ -492,8 +508,8 @@ export function IncidentDetailsDrawer({
       )}
 
       {isEditing && (
-        <form className="incident-edit-form bg-slate-50 border border-slate-200 rounded p-3 mb-4 text-xs flex flex-col gap-2" onSubmit={handleSaveEdit}>
-          <p className="font-bold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1 mb-1">Edit incident</p>
+        <form className="incident-edit-form bg-teal-50/40 border border-teal-100 rounded p-3 mb-4 text-xs flex flex-col gap-2" onSubmit={handleSaveEdit}>
+          <p className="font-bold text-teal-900 uppercase tracking-wider border-b border-teal-100 pb-1 mb-1">Edit incident</p>
 
           <div className="flex flex-col gap-0.5">
             <span className="font-bold text-slate-500">Road / River</span>
@@ -530,7 +546,7 @@ export function IncidentDetailsDrawer({
               onChange={(e) => setEditForm((f) => ({ ...f, type: e.target.value as IncidentType }))}
             >
               {incidentTypeOptions.map((t) => (
-                <option key={t} value={t}>{incidentTypeMeta[t].icon} {t}</option>
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </div>
@@ -574,7 +590,7 @@ export function IncidentDetailsDrawer({
             </button>
             <button
               type="submit"
-              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-semibold"
+              className="px-2 py-1 bg-teal-700 hover:bg-teal-600 text-white rounded font-semibold"
               disabled={isSavingParentEdit}
             >
               {isSavingParentEdit ? "Saving..." : "Save changes"}
@@ -584,27 +600,44 @@ export function IncidentDetailsDrawer({
       )}
 
       {/* ── Report Explanation Box (Feature 11) ─────────── */}
-      <div className="report-explanation-box bg-slate-50 p-3 rounded-lg border border-slate-200 mb-4 text-sm text-slate-700">
-        <h4 className="font-semibold text-slate-800 flex items-center gap-1 mb-1">
-          <HelpCircle size={14} /> Why is this active?
+      <div className="report-explanation-box bg-teal-50/40 p-3 rounded-lg border border-teal-100 mb-4">
+        <h4 className="font-bold text-teal-800 flex items-center gap-1 mb-1.5 text-xs uppercase tracking-wide">
+          <HelpCircle size={13} /> Why is this active?
         </h4>
-        <p className="leading-relaxed">
-          This <strong>{reportExplanation.type}</strong> is active due to{" "}
-          <strong>{reportExplanation.severityText}</strong> conditions. Verified by{" "}
-          <strong>{reportExplanation.totalReports} report(s)</strong> across{" "}
-          <strong>{reportExplanation.uniqueUsers} independent user(s)</strong>.
+        <p className="text-xs text-teal-900 leading-relaxed mb-2">
+          Active due to <strong>{reportExplanation.severityText}</strong> conditions.
           {reportExplanation.volunteerVerified && (
-            <span> Officially verified by emergency volunteers.</span>
+            <span className="text-teal-700"> · Verified by volunteers.</span>
           )}
-          {" "}Updated <strong>{reportExplanation.lastUpdatedText}</strong>. Exposing a trust confidence level of{" "}
-          <strong>{reportExplanation.confidence}%</strong>.
         </p>
+        <div className="report-explain-grid">
+          <div className="report-explain-stat">
+            <Megaphone size={12} className="text-teal-600" />
+            <strong>{reportExplanation.totalReports}</strong>
+            <span>reports</span>
+          </div>
+          <div className="report-explain-stat">
+            <Users size={12} className="text-teal-600" />
+            <strong>{reportExplanation.uniqueUsers}</strong>
+            <span>users</span>
+          </div>
+          <div className="report-explain-stat">
+            <Clock size={12} className="text-teal-600" />
+            <strong>{shortRelativeTime(incident.updatedAt || incident.createdAt)}</strong>
+            <span>updated</span>
+          </div>
+          <div className="report-explain-stat">
+            <ShieldCheck size={12} className="text-teal-600" />
+            <strong>{reportExplanation.confidence}%</strong>
+            <span>trust</span>
+          </div>
+        </div>
       </div>
 
       {/* ── Verification summary bar ─────────────────────── */}
       {verif.total > 0 && (
-        <div className="incident-verif-bar bg-slate-50 border border-slate-200 rounded p-3 mb-4 text-xs">
-          <p className="incident-verif-bar-label font-bold text-slate-700 mb-1 flex items-center gap-1">
+        <div className="incident-verif-bar bg-teal-50/40 border border-teal-100 rounded p-3 mb-4 text-xs">
+          <p className="incident-verif-bar-label font-bold text-teal-900 mb-1 flex items-center gap-1">
             <CheckSquare size={12} />
             {verif.total} community verification{verif.total > 1 ? "s" : ""}
             {verif.dominant ? ` — most say "${voteOptions.find(v => v.id === verif.dominant)?.label}"` : ""}
@@ -619,7 +652,7 @@ export function IncidentDetailsDrawer({
                   className="incident-verif-vote-chip border px-2 py-0.5 rounded text-[10px] font-semibold"
                   style={{ background: opt.bg, color: opt.text, borderColor: opt.border }}
                 >
-                  {opt.icon} {opt.label} <strong>×{count}</strong>
+                  {<opt.icon size={12} />} {opt.label} <strong>×{count}</strong>
                 </span>
               );
             })}
@@ -628,14 +661,22 @@ export function IncidentDetailsDrawer({
       )}
 
       {/* ── Expose Timestamps (Feature 1) ───────────────── */}
-      <div className="incident-timestamps text-xs text-slate-500 mb-4 grid grid-cols-2 gap-1 border-b border-slate-100 pb-3">
-        <div>🕒 First reported: {formatRelativeTime(incident.createdAt)}</div>
-        <div>🔄 Last updated: {formatRelativeTime(incident.updatedAt || incident.createdAt)}</div>
+      <div className="incident-timestamps text-xs text-slate-600 mb-4 grid grid-cols-2 gap-1 border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-1">
+          <Clock size={12} className="text-teal-600 shrink-0" /> First reported: {formatRelativeTime(incident.createdAt)}
+        </div>
+        <div className="flex items-center gap-1">
+          <History size={12} className="text-teal-600 shrink-0" /> Last updated: {formatRelativeTime(incident.updatedAt || incident.createdAt)}
+        </div>
         {incident.lastVerifiedAt && (
-          <div>✓ Last verified: {formatRelativeTime(incident.lastVerifiedAt)}</div>
+          <div className="flex items-center gap-1">
+            <BadgeCheck size={12} className="text-teal-600 shrink-0" /> Last verified: {formatRelativeTime(incident.lastVerifiedAt)}
+          </div>
         )}
         {incident.lastReportAt && (
-          <div>📣 Last report added: {formatRelativeTime(incident.lastReportAt)}</div>
+          <div className="flex items-center gap-1">
+            <Megaphone size={12} className="text-teal-600 shrink-0" /> Last report added: {formatRelativeTime(incident.lastReportAt)}
+          </div>
         )}
       </div>
 
@@ -666,7 +707,7 @@ export function IncidentDetailsDrawer({
           Incident Timeline ({timelineEvents.length})
         </p>
 
-        <div className="incident-timeline-list flex flex-col gap-3 relative before:content-[''] before:absolute before:left-4 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+        <div className="incident-timeline-list flex flex-col gap-3 relative before:content-[''] before:absolute before:left-4 before:top-2 before:bottom-2 before:w-0.5 before:bg-teal-200">
           {timelineEvents.map((event) => {
             const isReport = event.reportObj !== undefined;
             const rObj = event.reportObj;
@@ -716,14 +757,14 @@ export function IncidentDetailsDrawer({
                   }}
                 />
 
-                <div className="incident-timeline-body flex-1 bg-white p-3 rounded-lg border border-slate-100 shadow-sm text-sm">
+                <div className="incident-timeline-body flex-1 bg-white p-3 rounded-lg border border-teal-100 shadow-sm text-sm">
                   <div className="incident-timeline-meta flex items-center justify-between mb-1 text-xs text-slate-500">
                     <span className="incident-timeline-reporter font-medium flex items-center gap-1">
-                      <Users size={11} />
+                      <Users size={12} />
                       {event.reporter}
                     </span>
                     <span className="incident-timeline-time flex items-center gap-1">
-                      <Clock3 size={10} />
+                      <Clock3 size={12} />
                       {formatRelativeTime(event.timestamp)}
                     </span>
                   </div>
@@ -745,7 +786,7 @@ export function IncidentDetailsDrawer({
                   {/* Notes content */}
                   {editingReportId === event.id && rObj ? (
                     // Inline Edit Form (Feature 5 & 6)
-                    <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded flex flex-col gap-2">
+                    <div className="mt-2 p-2 bg-teal-50/40 border border-teal-100 rounded flex flex-col gap-2">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">
                           Edit Report Notes:
@@ -776,14 +817,14 @@ export function IncidentDetailsDrawer({
                       <div className="flex gap-2 justify-end">
                         <button
                           type="button"
-                          className="px-2 py-1 text-xs bg-slate-200 rounded font-semibold"
+                          className="px-2 py-1 text-xs bg-teal-100 rounded font-semibold text-teal-900"
                           onClick={() => setEditingReportId(null)}
                         >
                           Cancel
                         </button>
                         <button
                           type="button"
-                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded font-semibold flex items-center gap-1"
+                          className="px-2 py-1 text-xs bg-teal-700 text-white rounded font-semibold flex items-center gap-1"
                           disabled={isSavingEdit}
                           onClick={() => saveEdit(event.id)}
                         >
@@ -820,14 +861,14 @@ export function IncidentDetailsDrawer({
 
                   {/* Actions Drawer Panel (Features 5 & 6) */}
                   {showActions && editingReportId !== event.id && rObj && (
-                    <div className="flex gap-2 justify-end mt-2 pt-2 border-t border-slate-100 text-xs">
+                    <div className="flex gap-2 justify-end mt-2 pt-2 border-t border-teal-100 text-xs">
                       {(userRole === "admin" || userRole === "moderator" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
                         <button
                           type="button"
-                          className="text-blue-600 hover:text-blue-800 flex items-center gap-0.5"
+                          className="text-teal-600 hover:text-teal-800 flex items-center gap-0.5"
                           onClick={() => startEdit(rObj)}
                         >
-                          <Edit size={10} /> Edit
+                          <Edit size={12} /> Edit
                         </button>
                       )}
                       {(userRole === "admin" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
@@ -836,7 +877,7 @@ export function IncidentDetailsDrawer({
                           className="text-red-600 hover:text-red-800 flex items-center gap-0.5"
                           onClick={() => deleteReport(rObj.id)}
                         >
-                          <Trash2 size={10} /> Delete
+                          <Trash2 size={12} /> Delete
                         </button>
                       )}
                     </div>
@@ -856,7 +897,7 @@ export function IncidentDetailsDrawer({
       </div>
 
       {/* ── Verification Section ─────────────────────────── */}
-      <div className="incident-verify-section bg-slate-50 p-4 rounded-lg border border-slate-200">
+      <div className="incident-verify-section bg-teal-50/40 p-4 rounded-lg border border-teal-100">
         <p className="eyebrow text-xs uppercase text-slate-400 font-bold mb-3 flex items-center gap-1">
           <CheckSquare size={12} />
           Verify this incident
@@ -864,7 +905,9 @@ export function IncidentDetailsDrawer({
 
         {!user ? (
           <div className="incident-auth-gate text-center py-3 bg-white border border-slate-200 rounded p-4">
-            <div className="incident-auth-gate-icon mb-1">🔒</div>
+            <div className="incident-auth-gate-icon mb-1">
+              <Lock size={20} />
+            </div>
             <p className="incident-auth-gate-title font-semibold text-slate-800">Sign in to verify</p>
             <p className="incident-auth-gate-sub text-xs text-slate-500 mb-3">
               Anyone can submit reports. Verification requires a Google account to
@@ -872,10 +915,10 @@ export function IncidentDetailsDrawer({
             </p>
             <button
               type="button"
-              className="incident-auth-gate-btn bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 mx-auto"
+              className="incident-auth-gate-btn bg-teal-700 hover:bg-teal-600 text-white rounded px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 mx-auto"
               onClick={onOpenAuth}
             >
-              <LogIn size={13} />
+              <LogIn size={14} />
               Sign in with Google
             </button>
           </div>
@@ -896,7 +939,7 @@ export function IncidentDetailsDrawer({
             <p className="incident-verify-hint text-xs text-slate-600 mb-3">
               Signed in as <strong>{user.name}</strong>
               {user.isReal ? (
-                <span className="incident-google-badge ml-1 bg-blue-100 text-blue-800 px-1 py-0.5 rounded text-[9px]">
+                <span className="incident-google-badge ml-1 bg-teal-100 text-teal-800 px-1 py-0.5 rounded text-[9px]">
                   Google
                 </span>
               ) : (
@@ -916,7 +959,7 @@ export function IncidentDetailsDrawer({
                   disabled={isSubmitting}
                   onClick={() => handleVote(opt.id)}
                 >
-                  <span className="incident-vote-icon text-lg mb-1">{opt.icon}</span>
+                  <span className="incident-vote-icon mb-1"><opt.icon size={16} /></span>
                   <span className="font-semibold">{opt.label}</span>
                   {voteCounts[opt.id] > 0 && (
                     <span className="incident-vote-count mt-1 bg-white px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-200">

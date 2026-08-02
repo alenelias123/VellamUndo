@@ -1,3 +1,12 @@
+import {
+  BedDouble,
+  Cross,
+  GlassWater,
+  LifeBuoy,
+  PlugZap,
+  Utensils,
+  type LucideIcon
+} from "lucide-react";
 import type { HelpPriority, HelpRequest, HelpStatus, HelpType } from "./types";
 
 export const helpTypeMeta: Record<
@@ -5,31 +14,38 @@ export const helpTypeMeta: Record<
   {
     label: string;
     description: string;
+    icon: LucideIcon;
   }
 > = {
   rescue: {
     label: "Rescue",
-    description: "People need evacuation or direct rescue"
+    description: "People need evacuation or direct rescue",
+    icon: LifeBuoy
   },
   food: {
     label: "Food",
-    description: "Cooked meals or dry ration required"
+    description: "Cooked meals or dry ration required",
+    icon: Utensils
   },
   water: {
     label: "Water",
-    description: "Drinking water required"
+    description: "Drinking water required",
+    icon: GlassWater
   },
   medicine: {
     label: "Medicine",
-    description: "Medicine, first aid, or medical support"
+    description: "Medicine, first aid, or medical support",
+    icon: Cross
   },
   shelter: {
     label: "Shelter",
-    description: "Temporary safe accommodation"
+    description: "Temporary safe accommodation",
+    icon: BedDouble
   },
   charging: {
     label: "Charging point",
-    description: "Power bank, phone charging, or power access"
+    description: "Power bank, phone charging, or power access",
+    icon: PlugZap
   }
 };
 
