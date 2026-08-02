@@ -21,10 +21,10 @@ import {
 } from "lucide-react";
 import {
   calculateRoadRoutes,
-  geocodeDestination,
   haversineDistanceKm,
   type SearchResultPlace
 } from "@/lib/routing";
+import { useLocationSearch } from "@/hooks/useLocationSearch";
 import type { Coordinates, Incident, RouteOption } from "@/lib/types";
 
 const DEFAULT_KOCHI_COORDS: Coordinates = { lat: 9.9769, lng: 76.2824 };
@@ -48,12 +48,10 @@ export function SafeRoutePlanner({
   onRoutesCalculated,
   onSelectIncident
 }: SafeRoutePlannerProps) {
-  // ── Destination search ────────────────────────────────────────────
-  const [destinationQuery, setDestinationQuery] = useState("");
-  const [destinationResults, setDestinationResults] = useState<SearchResultPlace[]>([]);
-  const [destinationSearchError, setDestinationSearchError] = useState("");
+  // ── Destination & origin typeahead ────────────────────────────────
+  const dest = useLocationSearch();
+  const origin$ = useLocationSearch();
   const [selectedDestination, setSelectedDestination] = useState<SearchResultPlace | null>(null);
-  const [isDestSearching, setIsDestSearching] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
 
@@ -61,13 +59,11 @@ export function SafeRoutePlanner({
   const [openNavMenuId, setOpenNavMenuId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // ── Custom origin / start location ───────────────────────────────
+  // ── Origin typeahead ──────────────────────────────────────────────
   const [customOrigin, setCustomOrigin] = useState<Coordinates | null>(null);
-  const [originQuery, setOriginQuery] = useState("");
-  const [originResults, setOriginResults] = useState<SearchResultPlace[]>([]);
-  const [isOriginSearching, setIsOriginSearching] = useState(false);
-  const [originSearchError, setOriginSearchError] = useState("");
   const [showOriginSearch, setShowOriginSearch] = useState(false);
+  const originQuery = origin$.query;
+  const destinationQuery = dest.query;
 
   const lastRerouteOriginRef = useRef<Coordinates | null>(null);
   const lastRerouteAtRef = useRef<number>(0);
@@ -95,32 +91,10 @@ export function SafeRoutePlanner({
     [incidents]
   );
 
-  // ── Origin search ─────────────────────────────────────────────────
-  async function handleOriginSearch() {
-    const q = originQuery.trim();
-    if (q.length < 2) return;
-    setIsOriginSearching(true);
-    setOriginSearchError("");
-    try {
-      const results = await geocodeDestination(q);
-      if (results.length === 0) {
-        setOriginSearchError("No places found. Try a different name.");
-        setOriginResults([]);
-      } else {
-        setOriginResults(results);
-      }
-    } catch {
-      setOriginSearchError("Search failed. Check your connection.");
-    } finally {
-      setIsOriginSearching(false);
-    }
-  }
-
   function selectOrigin(place: SearchResultPlace) {
     setCustomOrigin(place.coordinates);
-    setOriginQuery(place.name);
-    setOriginResults([]);
-    setOriginSearchError("");
+    origin$.setQuery(place.name);
+    origin$.clearSuggestions();
     setShowOriginSearch(false);
     lastRerouteOriginRef.current = null;
     lastRerouteAtRef.current = 0;
@@ -128,40 +102,17 @@ export function SafeRoutePlanner({
 
   function clearCustomOrigin() {
     setCustomOrigin(null);
-    setOriginQuery("");
-    setOriginResults([]);
-    setOriginSearchError("");
+    origin$.setQuery("");
+    origin$.clearSuggestions();
     setShowOriginSearch(false);
     lastRerouteOriginRef.current = null;
     lastRerouteAtRef.current = 0;
   }
 
-  // ── Destination search ────────────────────────────────────────────
-  async function handleDestinationSearch() {
-    const q = destinationQuery.trim();
-    if (q.length < 2) return;
-    setIsDestSearching(true);
-    setDestinationSearchError("");
-    try {
-      const results = await geocodeDestination(q);
-      if (results.length === 0) {
-        setDestinationSearchError("No places found. Try a different name.");
-        setDestinationResults([]);
-      } else {
-        setDestinationResults(results);
-      }
-    } catch {
-      setDestinationSearchError("Search failed. Check your connection.");
-    } finally {
-      setIsDestSearching(false);
-    }
-  }
-
   async function selectDestination(place: SearchResultPlace) {
     setSelectedDestination(place);
-    setDestinationResults([]);
-    setDestinationQuery(place.name);
-    setDestinationSearchError("");
+    dest.setQuery(place.name);
+    dest.clearSuggestions();
     onDestinationSelect(place);
 
     setIsCalculating(true);
@@ -179,9 +130,8 @@ export function SafeRoutePlanner({
   }
 
   function clearDestination() {
-    setDestinationQuery("");
-    setDestinationResults([]);
-    setDestinationSearchError("");
+    dest.setQuery("");
+    dest.clearSuggestions();
     setSelectedDestination(null);
     onDestinationSelect(null);
     onRouteChange(undefined);
@@ -491,28 +441,38 @@ export function SafeRoutePlanner({
                   value={originQuery}
                   autoFocus
                   onChange={(e) => {
-                    setOriginQuery(e.target.value);
-                    if (!e.target.value) { setOriginResults([]); setOriginSearchError(""); }
+                    origin$.setQuery(e.target.value);
+                    if (!e.target.value) origin$.clearSuggestions();
                   }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleOriginSearch(); } }}
+                  onKeyDown={(e) => {
+                    origin$.handleKeyDown(e, selectOrigin);
+                    if (
+                      e.key === "Enter" &&
+                      !e.defaultPrevented &&
+                      origin$.suggestions.length > 0
+                    ) {
+                      e.preventDefault();
+                      selectOrigin(origin$.suggestions[0]);
+                    }
+                  }}
                 />
                 {originQuery ? (
                   <button type="button" className="location-search-clear"
-                    onClick={() => { setOriginQuery(""); setOriginResults([]); setOriginSearchError(""); }}>
+                    onClick={() => { origin$.setQuery(""); origin$.clearSuggestions(); }}>
                     <X size={12} />
                   </button>
                 ) : null}
               </div>
               <button type="button" className="location-search-btn"
-                onClick={handleOriginSearch}
-                disabled={isOriginSearching || originQuery.trim().length < 2}>
-                {isOriginSearching ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
+                onClick={() => origin$.setQuery(originQuery)}
+                disabled={origin$.isLoading || originQuery.trim().length < 2}>
+                {origin$.isLoading ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
               </button>
             </div>
-            {originSearchError ? <p className="location-search-error">{originSearchError}</p> : null}
-            {originResults.length > 0 ? (
+            {origin$.error ? <p className="location-search-error">{origin$.error}</p> : null}
+            {origin$.suggestions.length > 0 ? (
               <ul className="location-search-results">
-                {originResults.map((r) => (
+                {origin$.suggestions.map((r) => (
                   <li key={r.id}>
                     <button type="button" onClick={() => selectOrigin(r)}>
                       <strong>📍 {r.name}</strong>
@@ -562,28 +522,40 @@ export function SafeRoutePlanner({
                 placeholder="e.g. Aluva, Marine Drive, Thrissur…"
                 value={destinationQuery}
                 onChange={(e) => {
-                  setDestinationQuery(e.target.value);
-                  if (!e.target.value) { setDestinationResults([]); setDestinationSearchError(""); }
+                  dest.setQuery(e.target.value);
+                  if (!e.target.value) dest.clearSuggestions();
                 }}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleDestinationSearch(); } }}
+                onKeyDown={(e) => {
+                  dest.handleKeyDown(e, (place) => {
+                    void selectDestination(place);
+                  });
+                  if (
+                    e.key === "Enter" &&
+                    !e.defaultPrevented &&
+                    dest.suggestions.length > 0
+                  ) {
+                    e.preventDefault();
+                    void selectDestination(dest.suggestions[0]);
+                  }
+                }}
               />
               {destinationQuery ? (
                 <button type="button" className="location-search-clear"
-                  onClick={() => { setDestinationQuery(""); setDestinationResults([]); setDestinationSearchError(""); }}>
+                  onClick={() => { dest.setQuery(""); dest.clearSuggestions(); }}>
                   <X size={12} />
                 </button>
               ) : null}
             </div>
             <button type="button" className="location-search-btn"
-              onClick={handleDestinationSearch}
-              disabled={isDestSearching || destinationQuery.trim().length < 2}>
-              {isDestSearching ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
+              onClick={() => dest.setQuery(destinationQuery)}
+              disabled={dest.isLoading || destinationQuery.trim().length < 2}>
+              {dest.isLoading ? <Loader2 size={13} className="report-spin" /> : <Search size={13} />}
             </button>
           </div>
-          {destinationSearchError ? <p className="location-search-error">{destinationSearchError}</p> : null}
-          {destinationResults.length > 0 ? (
+          {dest.error ? <p className="location-search-error">{dest.error}</p> : null}
+          {dest.suggestions.length > 0 ? (
             <ul className="location-search-results">
-              {destinationResults.map((r) => (
+              {dest.suggestions.map((r) => (
                 <li key={r.id}>
                   <button type="button" onClick={() => selectDestination(r)}>
                     <strong>📍 {r.name}</strong>
