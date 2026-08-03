@@ -14,7 +14,6 @@ import {
   Megaphone,
   Pencil,
   Save,
-  ShieldCheck,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -629,16 +628,14 @@ export function IncidentDetailsDrawer({
           sub={`Last ${shortRelativeTime(stats.lastReportTime)}`}
         />
         <StatCard
-          icon={ShieldCheck}
-          value={`${incident.confidence}%`}
-          label="Confidence"
-          sub={`${stats.uniqueUsers} reporter${stats.uniqueUsers === 1 ? "" : "s"}`}
-        />
-        <StatCard
           icon={Users}
           value={verif.total}
           label="Verifications"
-          sub={stats.dominantVote ? `Mostly "${stats.dominantVote}"` : "No votes yet"}
+          sub={
+            stats.dominantVote
+              ? `Mostly "${stats.dominantVote}" from ${stats.uniqueUsers} reporter${stats.uniqueUsers === 1 ? "" : "s"}`
+              : `${stats.uniqueUsers} reporter${stats.uniqueUsers === 1 ? "" : "s"}`
+          }
         />
         <StatCard
           icon={Clock3}

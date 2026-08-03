@@ -17,7 +17,7 @@ import { Ban, MapPin, PenLine, X, type LucideIcon } from "lucide-react";
 import { iconSvg } from "@/lib/icons";
 import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
 import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
-import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
+import { formatRelativeTime, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import { findBlockagePoint } from "@/lib/routing";
 import type {
   Coordinates,
@@ -495,17 +495,21 @@ export function FloodMap({
                       <typeMeta.icon size={14} className="shrink-0" />
                       <span>{incident.type}</span>
                     </div>
-                    <span className="text-xs text-gray-500 font-semibold">{incident.roadName}</span>
-                    <span className="text-xs text-gray-600 italic">Near {incident.landmark}</span>
-                    <div className="flex gap-2 items-center mt-1">
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] text-white font-bold"
-                        style={{ backgroundColor: sevMeta.color }}
-                      >
-                        {sevMeta.label}
+                    <strong>{incident.roadName}</strong>
+                    <span>Near {incident.landmark}, {incident.district}</span>
+                    {incident.needsVerification ? (
+                      <span className="mt-1 inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold border border-amber-300 text-amber-800 bg-amber-50">
+                        Needs verification
                       </span>
-                      <span className="text-xs font-bold text-teal-600">{incident.confidence}% match</span>
-                    </div>
+                    ) : null}
+                    <span>
+                      {(incident.reports?.length ?? 0)} report{(incident.reports?.length ?? 0) === 1 ? "" : "s"}
+                      {(incident.verifications?.length ?? 0) > 0
+                        ? ` ? ${incident.verifications?.length ?? 0} verification${(incident.verifications?.length ?? 0) === 1 ? "" : "s"}`
+                        : ""}
+                    </span>
+                    <span>Updated {formatRelativeTime(incident.updatedAt || incident.createdAt)}</span>
+                    <span style={{ fontSize: "0.72rem", color: "#475569" }}>Tap marker details panel to edit, verify, or view timeline.</span>
                   </div>
                 </Popup>
               </Marker>
