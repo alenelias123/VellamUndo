@@ -383,7 +383,6 @@ export async function POST(request: Request) {
       severity,
       notes,
       reporter,
-      photos = [],
       type,
       roadName,
       landmark,
@@ -543,19 +542,7 @@ export async function POST(request: Request) {
         new_value: { severity, notes, reporter: finalReporter }
       }]);
 
-    // 3. Insert report images if provided
-    if (photos.length > 0) {
-      const imageRows = photos.map((url: string) => ({
-        report_id: newRep.id,
-        image_url: url
-      }));
-      const { error: errImg } = await supabase.from("incident_images").insert(imageRows);
-      if (errImg) {
-        console.error("Failed to insert report images:", errImg.message);
-      }
-    }
-
-    // 4. Recalculate Incident Severity and Confidence
+    // 3. Recalculate Incident Severity and Confidence
     const { data: allReports } = await supabase
       .from("incident_reports")
       .select("*, incident_images(*)")
