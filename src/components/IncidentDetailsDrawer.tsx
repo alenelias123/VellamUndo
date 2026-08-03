@@ -295,12 +295,20 @@ export function IncidentDetailsDrawer({
     // Audit logs
     for (const a of incident.auditLogs ?? []) {
       if (a.userId?.startsWith("System")) continue;
+
+      const targetTable = a.targetTable.replace("incident_", "");
+      const isRedundantCreate =
+        a.action === "Create" &&
+        (targetTable === "incidents" || targetTable === "reports");
+
+      if (isRedundantCreate) continue;
+
       list.push({
         id: `a-${a.id}`,
         type: "Moderator Action",
         timestamp: a.createdAt,
         reporter: a.userId || "System Coordinator",
-        notes: `${a.action} performed on ${a.targetTable.replace("incident_", "")}.`
+        notes: `${a.action} performed on ${targetTable}.`
       });
     }
 
