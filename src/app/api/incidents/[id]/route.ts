@@ -70,11 +70,6 @@ function createRequestScopedSupabase(request: Request) {
 
 // PATCH to edit/update an incident
 export async function PATCH(request: Request, { params }: RouteParams) {
-  const auth = await requireAuth(request);
-  if (!auth.ok) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  }
-
   if (!supabase) {
     return NextResponse.json({ error: "Supabase client is not initialized" }, { status: 503 });
   }
@@ -85,6 +80,16 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
+    const requestScopedSupabase = createRequestScopedSupabase(request);
+    if (!requestScopedSupabase) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    const { data: authData, error: authError } = await requestScopedSupabase.auth.getUser();
+    if (authError || !authData?.user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
     const body = await request.json();
     const {
       type,
@@ -126,7 +131,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
     updatePayload.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabase
+    const { data, error } = await requestScopedSupabase
       .from("incidents")
       .update(updatePayload)
       .eq("id", id)
@@ -156,7 +161,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
           fallbackPayload.landmark = `${fallbackPayload.landmark || ""} [PATH:${encoded}]`;
         }
 
-        const { data: fbData, error: fbError } = await supabase
+        const { data: fbData, error: fbError } = await requestScopedSupabase
           .from("incidents")
           .update(fallbackPayload)
           .eq("id", id)

@@ -365,9 +365,14 @@ export function useEmergencyStore() {
     async editReport(reportId: string, notes: string, severity: SeverityLevel, token?: string) {
       if (navigator.onLine) {
         try {
+          const sessionData = await supabase?.auth.getSession();
+          const accessToken = sessionData?.data.session?.access_token;
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (accessToken) headers["authorization"] = `Bearer ${accessToken}`;
+
           const res = await fetch(`/api/reports/${reportId}`, {
             method: "PUT",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({ notes, severity, ownershipToken: token })
           });
           if (res.ok) {
@@ -505,6 +510,8 @@ export function useEmergencyStore() {
     },
 
     async editIncident(incidentId: string, updates: Partial<Incident> & { latitude?: number; longitude?: number }) {
+      const previousIncidents = state.incidents;
+
       setState((prev) => ({
         ...prev,
         incidents: prev.incidents.map((inc) => {
@@ -517,19 +524,42 @@ export function useEmergencyStore() {
         })
       }));
 
-      if (navigator.onLine) {
-        try {
-          const res = await fetch(`/api/incidents/${incidentId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(updates)
-          });
-          if (res.ok) {
-            await fetchIncidents();
-          }
-        } catch (err) {
-          console.warn("Failed to edit incident online:", err);
+      if (!navigator.onLine) {
+        alert("You must be online to edit incidents.");
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        return;
+      }
+
+      try {
+        const sessionData = await supabase?.auth.getSession();
+        const sessionEmail = sessionData?.data.session?.user?.email;
+        const accessToken = sessionData?.data.session?.access_token;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (sessionEmail) headers["x-admin-email"] = sessionEmail;
+        if (accessToken) headers["authorization"] = `Bearer ${accessToken}`;
+
+        const res = await fetch(`/api/incidents/${incidentId}`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(updates)
+        });
+        if (!res.ok) {
+          let message = "Failed to edit incident";
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string") {
+              message = data.error;
+            }
+          } catch {}
+          setState((prev) => ({ ...prev, incidents: previousIncidents }));
+          alert(message);
+          return;
         }
+        await fetchIncidents();
+      } catch (err) {
+        console.warn("Failed to edit incident online:", err);
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        alert("Failed to edit incident");
       }
     },
 

@@ -2,7 +2,30 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { supabase } from "@/lib/supabase";
 import { createClient as createServerSupabase } from "@/utils/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { SeverityLevel } from "@/lib/types";
+
+type RouteParams = {
+  params: Promise<{ id: string }>;
+};
+
+function createRequestScopedSupabase(request: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const authHeader = request.headers.get("authorization");
+
+  if (!supabaseUrl || !supabaseKey || !authHeader) {
+    return null;
+  }
+
+  return createSupabaseClient(supabaseUrl, supabaseKey, {
+    global: {
+      headers: {
+        Authorization: authHeader,
+      },
+    },
+  });
+}
 
 // Helper to determine roles
 function getUserRole(email: string, metadata: any): "admin" | "moderator" | "user" {
@@ -71,13 +94,13 @@ function calculateIncidentConfidence(
 }
 
 // PUT to edit a report
-export async function PUT(request: Request, context: any) {
+export async function PUT(request: Request, { params }: RouteParams) {
   if (!supabase) {
     return NextResponse.json({ error: "Supabase client is not initialized" }, { status: 503 });
   }
 
   try {
-    const id = context.params?.id;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Report ID is required" }, { status: 400 });
     }
@@ -97,9 +120,11 @@ export async function PUT(request: Request, context: any) {
     }
 
     // Auth check
-    const cookieStore = await cookies();
-    const supabaseServer = createServerSupabase(cookieStore);
-    const { data: { user } } = await supabaseServer.auth.getUser();
+    const requestScopedSupabase = createRequestScopedSupabase(request);
+    const { data: authData, error: authError } = requestScopedSupabase
+      ? await requestScopedSupabase.auth.getUser()
+      : { data: { user: null }, error: null };
+    const user = authError ? null : authData?.user ?? null;
 
     let authorized = false;
     let userIdString = "Guest";
@@ -131,7 +156,9 @@ export async function PUT(request: Request, context: any) {
     }
 
     // Update the report
-    const { error: errUpdate } = await supabase
+    const actor = requestScopedSupabase ?? supabase;
+
+    const { error: errUpdate } = await actor
       .from("incident_reports")
       .update({
         notes: notes ?? report.notes,
@@ -167,13 +194,13 @@ export async function PUT(request: Request, context: any) {
 }
 
 // DELETE to soft-delete a report
-export async function DELETE(request: Request, context: any) {
+export async function DELETE(request: Request, { params }: RouteParams) {
   if (!supabase) {
     return NextResponse.json({ error: "Supabase client is not initialized" }, { status: 503 });
   }
 
   try {
-    const id = context.params?.id;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Report ID is required" }, { status: 400 });
     }
@@ -194,9 +221,11 @@ export async function DELETE(request: Request, context: any) {
     }
 
     // Auth check
-    const cookieStore = await cookies();
-    const supabaseServer = createServerSupabase(cookieStore);
-    const { data: { user } } = await supabaseServer.auth.getUser();
+    const requestScopedSupabase = createRequestScopedSupabase(request);
+    const { data: authData, error: authError } = requestScopedSupabase
+      ? await requestScopedSupabase.auth.getUser()
+      : { data: { user: null }, error: null };
+    const user = authError ? null : authData?.user ?? null;
 
     let authorized = false;
     let userIdString = "Guest";
@@ -228,7 +257,9 @@ export async function DELETE(request: Request, context: any) {
     }
 
     // Soft delete report
-    const { error: errSoftDelete } = await supabase
+    const actor = requestScopedSupabase ?? supabase;
+
+    const { error: errSoftDelete } = await actor
       .from("incident_reports")
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", id);
