@@ -107,14 +107,9 @@ button:disabled {
 .brand-mark {
   width: 44px;
   height: 44px;
-  border-radius: var(--radius);
   display: grid;
   place-items: center;
-  color: #ffffff;
-  background: var(--teal-dark);
-  box-shadow: var(--shadow);
   flex: 0 0 auto;
-  overflow: hidden;
 }
 
 .brand-mark-img {
