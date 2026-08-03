@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
-  Camera,
-  CheckCircle,
   CheckCircle2,
   Droplets,
   Loader2,
@@ -16,7 +14,6 @@ import {
   X
 } from "lucide-react";
 import { useLocationSearch } from "@/hooks/useLocationSearch";
-import { compressImage, uploadImageToSupabase } from "@/lib/imageUpload";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import { getElevationAt } from "@/lib/elevation";
 import { haversineDistanceKm, type SearchResultPlace } from "@/lib/routing";
@@ -102,9 +99,6 @@ export function ReportPanel({
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState("");
-  const [uploadQueue, setUploadQueue] = useState<
-    Array<{ name: string; progress: number; error?: string; url?: string }>
-  >([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -351,44 +345,6 @@ export function ReportPanel({
     location$.clearSuggestions();
   }
 
-  async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const filesArray = Array.from(files);
-    const newItems = filesArray.map((file) => ({ name: file.name, progress: 0 }));
-    setUploadQueue((prev) => [...prev, ...newItems]);
-
-    filesArray.forEach(async (file, idx) => {
-      const queueIndex = uploadQueue.length + idx;
-      try {
-        const compressedBlob = await compressImage(file);
-        const publicUrl = await uploadImageToSupabase(compressedBlob, file.name, (progress) => {
-          setUploadQueue((prev) => {
-            const copy = [...prev];
-            if (copy[queueIndex]) copy[queueIndex].progress = progress;
-            return copy;
-          });
-        });
-        setUploadQueue((prev) => {
-          const copy = [...prev];
-          if (copy[queueIndex]) {
-            copy[queueIndex].progress = 100;
-            copy[queueIndex].url = publicUrl;
-          }
-          return copy;
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Upload failed";
-        setUploadQueue((prev) => {
-          const copy = [...prev];
-          if (copy[queueIndex]) copy[queueIndex].error = message;
-          return copy;
-        });
-      }
-    });
-  }
-
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!pendingLocation) {
@@ -398,8 +354,6 @@ export function ReportPanel({
 
     setIsSubmitting(true);
     setSubmitSuccess(false);
-
-    const uploadedUrls = uploadQueue.filter((item) => item.url).map((item) => item.url!);
 
     const payload: OfflineReportPayload = {
       latitude: pendingLocation.lat,
@@ -411,7 +365,7 @@ export function ReportPanel({
       district,
       notes: notes.trim() || undefined,
       reporter: reporter.trim() || "Community reporter",
-      photos: uploadedUrls,
+      photos: [],
       elevationMeters,
       floodStartLat: stretchStart?.lat,
       floodStartLng: stretchStart?.lng,
@@ -432,7 +386,6 @@ export function ReportPanel({
       await onSubmit(payload);
       setSubmitSuccess(true);
       setNotes("");
-      setUploadQueue([]);
       onStretchReset?.();
       setTimeout(() => setSubmitSuccess(false), 3000);
     } catch {
@@ -441,8 +394,6 @@ export function ReportPanel({
       setIsSubmitting(false);
     }
   }
-
-  const uploadsInProgress = uploadQueue.some((item) => !item.url && !item.error);
 
   return (
     <section className="panel-stack reporting-drawer" aria-label="Incident Reporting Sheet">
@@ -804,46 +755,6 @@ export function ReportPanel({
             </div>
           </label>
 
-          {/* ── Photos section ─────────────────────────────── */}
-          <div className="span-2 form-section-label">Photos</div>
-
-          {/* ── Photos ─────────────────────────────────────── */}
-          <label className="span-2">
-            Photos
-            <div className="photo-drop-zone">
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handlePhotoChange}
-                className="photo-file-input"
-              />
-              <Camera size={18} />
-              <span>Attach photos or take a picture</span>
-            </div>
-
-            {uploadQueue.length > 0 ? (
-              <ul className="upload-queue">
-                {uploadQueue.map((item, index) => (
-                  <li key={index} className="upload-queue-item">
-                    <span className="upload-filename">{item.name}</span>
-                    {item.error ? (
-                      <span className="upload-status upload-status--error">{item.error}</span>
-                    ) : item.progress < 100 ? (
-                      <span className="upload-status upload-status--progress">
-                        {item.progress}%
-                      </span>
-                    ) : (
-                      <span className="upload-status upload-status--done">
-                        <CheckCircle2 size={12} /> Done
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </label>
-
           {/* ── Notes section ──────────────────────────────── */}
           <div className="span-2 form-section-label">Notes & Reporter</div>
 
@@ -878,7 +789,7 @@ export function ReportPanel({
           <button
             className="primary-action span-2"
             type="submit"
-            disabled={isSubmitting || uploadsInProgress}
+            disabled={isSubmitting}
             style={{ marginTop: 4 }}
           >
             {isSubmitting ? (
