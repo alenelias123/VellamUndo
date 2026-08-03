@@ -16,7 +16,9 @@ import {
   Search,
   SlidersHorizontal,
   X,
-  Loader2
+  Loader2,
+  Github,
+  Linkedin
 } from "lucide-react";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
@@ -136,6 +138,20 @@ export default function HomeClient() {
     }
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  // Footer appears only after the user scrolls down within the app shell.
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [showFooter, setShowFooter] = useState(false);
+  useEffect(() => {
+    function handleScroll() {
+      setShowFooter((shellRef.current?.scrollTop ?? 0) > 8);
+    }
+    handleScroll();
+    const el = shellRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
   }, []);
   
   // Shared routing destination to trigger from search
@@ -327,7 +343,7 @@ export default function HomeClient() {
   const activeFilterCount = filterSeverities.length + filterStatus.length;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" ref={shellRef}>
       {/* Auth modal */}
       <AuthModal
         isOpen={authModalOpen}
@@ -749,6 +765,25 @@ export default function HomeClient() {
           ? <>GPS live · {userLocation.lat}, {userLocation.lng}</>
           : geoError ?? "Fetching GPS…"}
       </div>
+
+      {/* ── Footer (only after scrolling down) ───────────── */}
+      <footer className={`app-footer${showFooter ? " app-footer--visible" : ""}`}>
+          <div className="footer-links">
+            <a href="https://www.linkedin.com/in/alen-elias-bb3812327/" target="_blank" rel="noreferrer" aria-label="Alen Elias on LinkedIn">
+              <Linkedin size={16} /> Alen Elias
+            </a>
+            <a href="https://www.linkedin.com/in/amith-biju-a70813327/" target="_blank" rel="noreferrer" aria-label="Amith Biju on LinkedIn">
+              <Linkedin size={16} /> Amith Biju
+            </a>
+            <a href="https://github.com/alenelias123" target="_blank" rel="noreferrer" aria-label="Alen Elias on GitHub">
+              <Github size={16} /> Alen Elias
+            </a>
+            <a href="https://github.com/amith-exe" target="_blank" rel="noreferrer" aria-label="Amith Biju on GitHub">
+              <Github size={16} /> Amith Biju
+            </a>
+          </div>
+          <p className="footer-credit">Created by Alen Elias and Amith Biju</p>
+        </footer>
     </div>
   );
 }
