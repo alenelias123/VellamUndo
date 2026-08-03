@@ -698,6 +698,11 @@ textarea:focus {
   overscroll-behavior: contain;
 }
 
+/* Expand/collapse toggle for the operations panel — only visible on mobile */
+.operations-panel-toggle {
+  display: none;
+}
+
 .panel-stack {
   display: grid;
   gap: 12px;
@@ -1140,21 +1145,87 @@ label {
 
 @media (max-width: 1180px) {
   .workspace {
+    position: relative;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, auto) minmax(0, auto);
-    overflow-y: auto;
-    overflow-x: hidden;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+    --mobile-sheet-height: clamp(100px, 20dvh, 220px);
   }
 
   .map-stage {
-    height: auto;
-    min-height: clamp(340px, 58dvh, 640px);
+    height: 100%;
+    min-height: 0;
   }
 
+  /* Operations panel becomes a floating bottom sheet over the map,
+     so the map fills the whole workspace behind it. */
   .operations-panel {
-    grid-column: auto;
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 6;
+    height: var(--mobile-sheet-height);
     max-height: none;
-    overflow: visible;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 2px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    background: var(--panel);
+    box-shadow: 0 18px 50px rgb(16 32 34 / 26%);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .workspace--panel-expanded .operations-panel {
+    height: calc(100% - 16px);
+  }
+
+  /* Expand / collapse pill straddling the sheet's top edge */
+  .operations-panel-toggle {
+    display: flex;
+    position: absolute;
+    z-index: 7;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(var(--mobile-sheet-height) - 1px);
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px 14px 4px 4px;
+    background: var(--panel);
+    color: var(--teal-dark);
+    box-shadow: 0 -4px 14px rgb(16 32 34 / 14%);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .operations-panel-toggle:hover {
+    background: var(--panel-strong);
+  }
+
+  .ops-toggle-icon {
+    transition: transform 0.2s ease;
+  }
+
+  .ops-toggle-icon--up {
+    transform: rotate(180deg);
+  }
+
+  .workspace--panel-expanded .operations-panel-toggle {
+    bottom: calc(100% - 17px);
+  }
+
+  /* Lift the map's bottom-right controls above the bottom sheet */
+  .leaflet-bottom {
+    bottom: calc(var(--mobile-sheet-height) + 16px);
+  }
+
+  .workspace--panel-expanded .leaflet-bottom {
+    display: none;
   }
 }
 
@@ -1162,7 +1233,8 @@ label {
   .topbar {
     position: static;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 8px 12px;
+    min-height: 0;
   }
 
   .topbar-controls {
@@ -1187,13 +1259,23 @@ label {
     gap: 10px;
   }
 
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+  }
+
+  .brand-lockup h1 {
+    font-size: 1.12rem;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
     padding: 10px;
   }
 
   .map-stage {
-    min-height: clamp(300px, 48dvh, 540px);
+    height: 100%;
+    min-height: 0;
   }
 
   .map-summary {
@@ -1204,6 +1286,15 @@ label {
   .filter-grid,
   .route-stats {
     grid-template-columns: 1fr;
+  }
+
+  .severity-grid {
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  }
+
+  .gps-status-bar {
+    padding: 3px 12px 5px;
+    font-size: 0.66rem;
   }
 
   .span-2 {
@@ -1222,16 +1313,22 @@ label {
   }
 
   .brand-mark {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
   }
 
   .brand-lockup h1 {
-    font-size: 1.1rem;
+    font-size: 1.02rem;
   }
 
   .map-stage {
-    min-height: clamp(260px, 46dvh, 460px);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .filter-popover {
+    min-width: min(268px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
   }
 
   .metric-card {

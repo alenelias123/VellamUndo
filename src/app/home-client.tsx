@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleDot,
+  ChevronUp,
   LogIn,
   LogOut,
   MapPin,
@@ -60,6 +61,7 @@ export default function HomeClient() {
   const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
 
   const [activePanel, setActivePanel] = useState<ActivePanel>("route");
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
@@ -545,7 +547,7 @@ export default function HomeClient() {
         </header>
 
       {/* ── Workspace ─────────────────────────────────── */}
-      <main className="workspace">
+      <main className={`workspace${panelExpanded ? " workspace--panel-expanded" : ""}`}>
         <section className="map-stage" aria-label="Flood response map">
           {geoError && (
             <div className="absolute top-[88px] left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg z-[2000] text-xs font-semibold flex items-center gap-2 max-w-sm w-full mx-4 animate-slideDown">
@@ -596,6 +598,18 @@ export default function HomeClient() {
             <Metric label="Incidents Displayed" value={filteredIncidents.length} />
           </div>
         </section>
+
+        {/* ── Mobile: expand/collapse the operations panel ─── */}
+        <button
+          type="button"
+          className="operations-panel-toggle"
+          onClick={() => setPanelExpanded((v) => !v)}
+          aria-expanded={panelExpanded}
+          aria-label={panelExpanded ? "Minimize panel" : "Expand panel"}
+          title={panelExpanded ? "Minimize panel" : "Expand panel"}
+        >
+          <ChevronUp size={18} className={`ops-toggle-icon${panelExpanded ? " ops-toggle-icon--up" : ""}`} />
+        </button>
 
         {/* ── Operations panel ──────────────────────────── */}
         <aside className="operations-panel">
