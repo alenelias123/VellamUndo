@@ -558,7 +558,6 @@ export function SafeRoutePlanner({
       {/* ── Header ──────────────────────────────────────── */}
       <div className="route-planner-header">
         <div>
-          <p className="eyebrow">Flood Advisor Mode</p>
           <h2>Safe Route Navigation</h2>
         </div>
         <div className="route-header-actions">

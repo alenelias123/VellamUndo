@@ -432,7 +432,6 @@ export function ReportPanel({
         {/* ── Header ─────────────────────────────────────── */}
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Realtime Emergency</p>
             <h2>Report Flood</h2>
           </div>
           <div className="flex items-center gap-2">
