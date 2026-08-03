@@ -247,13 +247,16 @@ export default function HomeClient() {
   function handleStretchPoint(coords: Coordinates) {
     if (!stretchStart) {
       setStretchStart(coords);
+      if (!pendingLocation) setPendingLocation(coords);
       return;
     }
     if (!stretchEnd) {
       setStretchEnd(coords);
+      if (!pendingLocation) setPendingLocation(coords);
       return;
     }
     setStretchEnd(coords);
+    if (!pendingLocation) setPendingLocation(coords);
   }
 
   function handleStretchChange(start: Coordinates, end: Coordinates) {
@@ -692,11 +695,18 @@ export default function HomeClient() {
                   onPickLocation={handlePickLocation}
                   onSubmit={addReport}
                   onResetDemoData={resetDemoData}
-                  onBack={() => { setPendingLocation(undefined); setActivePanel("route"); }}
+                  onBack={() => {
+                    setPendingLocation(undefined);
+                    setIsDrawingStretch(false);
+                    setStretchStart(undefined);
+                    setStretchEnd(undefined);
+                    setActivePanel("route");
+                  }}
                   isDrawingStretch={isDrawingStretch}
                   stretchStart={stretchStart}
                   stretchEnd={stretchEnd}
                   onStretchChange={handleStretchChange}
+                  onToggleStretchDrawing={handleToggleStretchDrawing}
                   onStretchReset={() => {
                     setStretchStart(undefined);
                     setStretchEnd(undefined);

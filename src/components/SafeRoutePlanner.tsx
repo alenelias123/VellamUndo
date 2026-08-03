@@ -566,10 +566,10 @@ export function SafeRoutePlanner({
             type="button"
             className="route-report-btn"
             onClick={onOpenReport}
-            title="Report an incident on the map"
+            title="Report a flood incident on the map"
           >
             <Plus size={14} />
-            <span>Report</span>
+            <span>Report Flood</span>
           </button>
           <button
             type="button"
