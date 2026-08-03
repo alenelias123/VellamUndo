@@ -2241,6 +2241,59 @@ label {
   gap: 6px;
 }
 
+/* Mark-on-map options (plain text) */
+.report-loc-options-label {
+  margin: 4px 0 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.report-loc-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.report-loc-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--teal);
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(13, 109, 106, 0.3);
+  text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+
+.report-loc-option:hover {
+  color: var(--teal-dark);
+}
+
+.report-loc-option--active {
+  color: var(--teal-dark);
+  text-decoration-color: var(--teal);
+}
+
+.report-loc-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.report-loc-hint {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--teal);
+  font-weight: 700;
+  animation: fadeIn 0.2s ease;
+}
+
 .report-location-row {
   display: flex;
   align-items: center;
