@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleDot,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
+import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
 import { AuthModal } from "@/components/AuthModal";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
@@ -40,7 +42,7 @@ const FloodMap = dynamic(
   }
 );
 
-type ActivePanel = "report" | "route";
+type ActivePanel = "report" | "route" | "search";
 
 const FALLBACK_CENTER_COORDS: Coordinates = { lat: 10.15, lng: 76.4 };
 
@@ -59,6 +61,8 @@ export default function HomeClient() {
   } = useEmergencyStore();
 
   const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
+
+  const router = useRouter();
 
   const [activePanel, setActivePanel] = useState<ActivePanel>("route");
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -117,6 +121,8 @@ export default function HomeClient() {
   const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
   const globalSearchRef = useRef<HTMLDivElement>(null);
   const incidentSearch = useIncidentSearch(incidents);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Incident[]>([]);
 
   // Close the filter popover when clicking outside it
   useEffect(() => {
@@ -179,6 +185,18 @@ export default function HomeClient() {
     startGpsWatch();
     setRecenterTrigger((n) => n + 1);
   }, [startGpsWatch]);
+
+  // Tapping the brand/title opens the main route-planner page.
+  const handleBrandClick = useCallback(() => {
+    router.push("/");
+    setActivePanel("route");
+    setSelectedIncidentId(undefined);
+    setPendingLocation(undefined);
+    setRoutingDestination(null);
+    setPanelExpanded(false);
+    setSearchResults([]);
+    setSearchQuery("");
+  }, [router]);
 
   // ── Derived state & Filtering ──────────────────────────────────────
   const selectedIncident = useMemo(
@@ -253,7 +271,11 @@ export default function HomeClient() {
 
   function handleRouteChange(route?: RouteOption) {
     setActiveRoute(route);
-    if (route) setSelectedIncidentId(undefined);
+    if (route) {
+      setSelectedIncidentId(undefined);
+      // On mobile, minimize the bottom sheet so the map (with the route) is visible.
+      setPanelExpanded(false);
+    }
   }
 
   function handleSelectGlobalSuggestion(inc: Incident) {
@@ -271,6 +293,20 @@ export default function HomeClient() {
       coordinates: inc.coordinates
     });
     setActivePanel("route");
+  }
+
+  // Open the results page showing every matching incident for the query.
+  function openSearchResults() {
+    const matches = incidentSearch.suggestions;
+    if (matches.length === 0) return;
+    setSearchResults(matches);
+    setSearchQuery(incidentSearch.query.trim());
+    setSelectedIncidentId(undefined);
+    setPendingLocation(undefined);
+    setActivePanel("search");
+    setPanelExpanded(true);
+    incidentSearch.clearSuggestions();
+    setGlobalSearchFocused(false);
   }
 
   function toggleFilterSeverity(sev: string) {
@@ -301,15 +337,21 @@ export default function HomeClient() {
 
       {/* ── Topbar ────────────────────────────────────── */}
       <header className="topbar flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-slate-200 bg-white relative min-h-[72px]">
-        {/* Standard Brand Lockup */}
-        <div className="brand-lockup flex items-center gap-3">
-              <span className="brand-mark rounded-lg flex items-center justify-center shrink-0">
-                <ShieldCheck size={20} />
-              </span>
-              <div className="leading-tight">
-                <h1>Vellam Undo</h1>
-              </div>
-            </div>
+        {/* Standard Brand Lockup — click to open the route planner (main page) */}
+        <button
+          type="button"
+          className="brand-lockup flex items-center gap-3"
+          onClick={handleBrandClick}
+          title="Open Route Planner"
+          aria-label="Vellam Undo — open route planner"
+        >
+          <span className="brand-mark rounded-lg flex items-center justify-center shrink-0">
+            <ShieldCheck size={20} />
+          </span>
+          <div className="leading-tight">
+            <h1>Vellam Undo</h1>
+          </div>
+        </button>
 
             {/* Search + map filters */}
             <div className="topbar-middle">
@@ -335,7 +377,7 @@ export default function HomeClient() {
                         incidentSearch.suggestions.length > 0
                       ) {
                         e.preventDefault();
-                        handleSelectGlobalSuggestion(incidentSearch.suggestions[0]);
+                        openSearchResults();
                       }
                     }}
                   />
@@ -362,7 +404,8 @@ export default function HomeClient() {
                         Searching reported incidents…
                       </div>
                     ) : incidentSearch.suggestions.length > 0 ? (
-                      <ul className="glass-search-list">
+                      <>
+                        <ul className="glass-search-list">
                         {incidentSearch.suggestions.map((inc, idx) => {
                           const TypeIcon = incidentTypeMeta[inc.type]?.icon ?? MapPin;
                           const sevMeta =
@@ -412,6 +455,14 @@ export default function HomeClient() {
                           );
                         })}
                       </ul>
+                      <button
+                        type="button"
+                        className="glass-search-viewall"
+                        onClick={openSearchResults}
+                      >
+                        View all {incidentSearch.suggestions.length} results
+                      </button>
+                      </>
                     ) : (
                       <div className="glass-search-empty">{incidentSearch.error}</div>
                     )}
@@ -627,6 +678,14 @@ export default function HomeClient() {
             />
           ) : (
             <>
+              {activePanel === "search" && (
+                <SearchResultsPanel
+                  query={searchQuery}
+                  initialResults={searchResults}
+                  onBack={() => { setSearchResults([]); setActivePanel("route"); }}
+                  onSelectIncident={(id) => { setSelectedIncidentId(id); setPendingLocation(undefined); }}
+                />
+              )}
               {activePanel === "report" && (
                 <ReportPanel
                   pendingLocation={pendingLocation}
