@@ -519,7 +519,12 @@ export function SafeRoutePlanner({
               </button>
               {openNavMenuId === option.id ? (
                 <div className="route-nav-dropdown">
-                  <button type="button" onClick={() => { openNavigation(option, "google"); setOpenNavMenuId(null); }}>
+                  <button
+                    type="button"
+                    className="route-nav-btn--google"
+                    onClick={() => { openNavigation(option, "google"); setOpenNavMenuId(null); }}
+                  >
+                    <ExternalLink size={15} />
                     Google Maps
                   </button>
                   <button type="button" onClick={() => { openNavigation(option, "organic"); setOpenNavMenuId(null); }}>
