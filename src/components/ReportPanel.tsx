@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Droplets,
   Loader2,
+  LocateFixed,
   MapPin,
   RotateCcw,
   Search,
@@ -59,6 +60,7 @@ type ReportPanelProps = {
   isResolvingStretch?: boolean;
   onStretchChange?: (start: Coordinates, end: Coordinates) => void;
   onStretchReset?: () => void;
+  onToggleStretchDrawing?: (active: boolean) => void;
 };
 
 const incidentTypes = Object.keys(incidentTypeMeta) as IncidentType[];
@@ -81,7 +83,8 @@ export function ReportPanel({
   stretchPathKm,
   isResolvingStretch = false,
   onStretchChange,
-  onStretchReset
+  onStretchReset,
+  onToggleStretchDrawing
 }: ReportPanelProps) {
   const [roadName, setRoadName] = useState("");
   const [landmark, setLandmark] = useState("");
@@ -125,12 +128,12 @@ export function ReportPanel({
 
   const lastSnappedCoordsRef = useRef<Coordinates | null>(null);
 
+  // How the user chose to mark the flooded location (map point / road stretch).
+  const [locationMode, setLocationMode] = useState<"point" | "stretch" | null>(null);
+
   useEffect(() => {
-    if (!pendingLocation) {
-      requestGPS();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (pendingLocation) setLocationMode(null);
+  }, [pendingLocation]);
 
   useEffect(() => {
     if (!pendingLocation) return;
@@ -403,7 +406,7 @@ export function ReportPanel({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Realtime Emergency</p>
-            <h2>Report Incident</h2>
+            <h2>Report Flood</h2>
           </div>
           <div className="flex items-center gap-2">
             {onBack && (
@@ -533,24 +536,13 @@ export function ReportPanel({
 
         <form className="form-grid" onSubmit={handleSubmit}>
 
-          {/* ── Location card ──────────────────────────────── */}
+          {/* ── Incident Location + mark-on-map options ────── */}
           <div className="span-2 report-location-card">
             <div className="report-location-row">
               <span className="report-location-label">
                 <MapPin size={14} />
                 Incident Location
               </span>
-              <button
-                type="button"
-                className="text-button"
-                onClick={requestGPS}
-                disabled={gpsLoading}
-                style={{ padding: "0 8px", minHeight: 28, fontSize: "0.75rem" }}
-              >
-                {gpsLoading ? (
-                  <><Loader2 size={12} className="report-spin" /> Locking…</>
-                ) : "Use my GPS"}
-              </button>
             </div>
 
             {pendingLocation ? (
@@ -559,7 +551,7 @@ export function ReportPanel({
               </span>
             ) : (
               <span className="report-coords report-coords--empty">
-                {gpsLoading ? "Detecting location…" : "No location set — use GPS or search below"}
+                {gpsLoading ? "Detecting location…" : "No location set yet"}
               </span>
             )}
 
@@ -570,9 +562,49 @@ export function ReportPanel({
               </span>
             ) : null}
 
+            <p className="report-loc-options-label">Mark it on the map:</p>
+            <div className="report-loc-options">
+              <button
+                type="button"
+                className={`report-loc-option${locationMode === "point" ? " report-loc-option--active" : ""}`}
+                onClick={() => setLocationMode("point")}
+              >
+                <MapPin size={13} />
+                Click point on map
+              </button>
+              <button
+                type="button"
+                className={`report-loc-option${locationMode === "stretch" ? " report-loc-option--active" : ""}`}
+                onClick={() => { setLocationMode("stretch"); onToggleStretchDrawing?.(true); }}
+              >
+                <Droplets size={13} />
+                Trace road stretch
+              </button>
+              <button
+                type="button"
+                className="report-loc-option"
+                onClick={requestGPS}
+                disabled={gpsLoading}
+              >
+                {gpsLoading ? <Loader2 size={13} className="report-spin" /> : <LocateFixed size={13} />}
+                {gpsLoading ? "Locking…" : "Use my GPS"}
+              </button>
+            </div>
+
+            {locationMode === "point" && !pendingLocation ? (
+              <p className="report-loc-hint">
+                Click anywhere on the map to set the incident point…
+              </p>
+            ) : null}
+            {locationMode === "stretch" && !isDrawingStretch && !pendingLocation ? (
+              <p className="report-loc-hint">
+                Tap the map to mark the start, then the end of the flooded road…
+              </p>
+            ) : null}
+
             {/* ── Custom location search ─────────────────── */}
             <div className="location-search-block">
-              <p className="location-search-label">Or search a custom start location:</p>
+              <p className="location-search-label">Or search a location:</p>
               <div className="location-search-row">
                 <div className="location-search-input-wrap">
                   <Search size={14} className="location-search-icon" />
