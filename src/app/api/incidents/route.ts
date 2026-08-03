@@ -125,10 +125,15 @@ export function calculateIncidentConfidence(
 }
 
 // GET all incidents joined with child reports, images, verifications, and audit logs
-export async function GET() {
+// Optional `?q=` filters the result set across road names, landmarks, districts,
+// incident types, severities, report notes and reporters.
+export async function GET(request: Request) {
   if (!supabase) {
     return NextResponse.json({ incidents: [] });
   }
+
+  const { searchParams } = new URL(request.url);
+  const q = searchParams.get("q")?.trim().toLowerCase();
 
   try {
     // 1. Run Auto-Archive self-healing check
@@ -339,7 +344,26 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ incidents: mappedIncidents });
+    const results = q
+      ? mappedIncidents.filter((inc) => {
+          const haystack = [
+            inc.roadName,
+            inc.landmark,
+            inc.district,
+            inc.type,
+            inc.severity,
+            inc.status,
+            ...(inc.reports ?? []).map((r) => r.notes),
+            ...(inc.reports ?? []).map((r) => r.reporter)
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(q);
+        })
+      : mappedIncidents;
+
+    return NextResponse.json({ incidents: results });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Failed to fetch incidents" }, { status: 500 });
   }
