@@ -300,8 +300,10 @@ export function IncidentDetailsDrawer({
       const isRedundantCreate =
         a.action === "Create" &&
         (targetTable === "incidents" || targetTable === "reports");
+      const isRedundantVerify =
+        a.action === "Verify" && targetTable === "verifications";
 
-      if (isRedundantCreate) continue;
+      if (isRedundantCreate || isRedundantVerify) continue;
 
       list.push({
         id: `a-${a.id}`,

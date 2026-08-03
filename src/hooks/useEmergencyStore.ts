@@ -425,7 +425,6 @@ export function useEmergencyStore() {
 
           const newVerifications = [...(inc.verifications || []), tempVerification];
 
-          // Compute optimistic score shift
           let voteShift = 0;
           if (vote === "still-flooded" || vote === "water-rising") voteShift = 10;
           else if (vote === "water-receding") voteShift = 5;
@@ -441,25 +440,45 @@ export function useEmergencyStore() {
           };
         });
 
-      // Update UI optimistically
+      const previousIncidents = state.incidents;
+
       setState((prev) => ({
         ...prev,
         incidents: optimisticUpdate(prev.incidents)
       }));
 
-      if (navigator.onLine) {
-        try {
-          const res = await fetch(`/api/incidents/${incidentId}/verify`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vote, reporter })
-          });
-          if (res.ok) {
-            await fetchIncidents();
-          }
-        } catch (err) {
-          console.warn("Failed to cast verification vote online:", err);
+      if (!navigator.onLine) {
+        alert("You must be online to submit a verification.");
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/incidents/${incidentId}/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vote, reporter })
+        });
+
+        if (!res.ok) {
+          let message = "Failed to submit verification";
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string") {
+              message = data.error;
+            }
+          } catch {}
+
+          setState((prev) => ({ ...prev, incidents: previousIncidents }));
+          alert(message);
+          return;
         }
+
+        await fetchIncidents();
+      } catch (err) {
+        console.warn("Failed to cast verification vote online:", err);
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        alert("Failed to submit verification");
       }
     },
 

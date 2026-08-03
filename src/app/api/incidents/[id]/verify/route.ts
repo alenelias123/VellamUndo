@@ -3,13 +3,21 @@ import { supabase } from "@/lib/supabase";
 import { calculateIncidentConfidence } from "../../route";
 import type { SeverityLevel } from "@/lib/types";
 
-export async function POST(request: Request, context: any) {
+type RouteParams = {
+  params: Promise<{ id: string }>;
+};
+
+function isMissingColumnError(error: { code?: string | null } | null | undefined): boolean {
+  return error?.code === "42703";
+}
+
+export async function POST(request: Request, { params }: RouteParams) {
   if (!supabase) {
     return NextResponse.json({ error: "Supabase client is not initialized" }, { status: 503 });
   }
 
   try {
-    const id = context.params?.id;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Incident ID is required" }, { status: 400 });
     }
@@ -34,23 +42,35 @@ export async function POST(request: Request, context: any) {
     }
 
     // 2. Insert new verification vote
-    const { error: errInsert } = await supabase
+    const { data: insertedVerification, error: errInsert } = await supabase
       .from("incident_verifications")
       .insert([{
         incident_id: id,
         reporter: reporter.trim(),
         vote: vote
-      }]);
+      }])
+      .select()
+      .single();
 
     if (errInsert) {
       return NextResponse.json({ error: errInsert.message }, { status: 500 });
     }
 
     // 3. Fetch all reports and verifications to recalculate parent
-    const { data: allReports } = await supabase
+    let allReportsQuery = await supabase
       .from("incident_reports")
       .select("*, incident_images(*)")
-      .eq("incident_id", id);
+      .eq("incident_id", id)
+      .is("deleted_at", null);
+
+    if (isMissingColumnError(allReportsQuery.error)) {
+      allReportsQuery = await supabase
+        .from("incident_reports")
+        .select("*, incident_images(*)")
+        .eq("incident_id", id);
+    }
+
+    const { data: allReports } = allReportsQuery;
 
     const { data: allVerifications } = await supabase
       .from("incident_verifications")
@@ -121,18 +141,37 @@ export async function POST(request: Request, context: any) {
     }
 
     // 5. Update the parent incident
-    const { error: errUpdate } = await supabase
-      .from("incidents")
-      .update({
-        status: newStatus,
-        severity: newSeverity,
-        confidence: newConfidence,
-        resolved_at: resolvedAt,
-        updated_at: new Date().toISOString(),
-        last_verified_at: new Date().toISOString(),
-        needs_verification: false
-      })
-      .eq("id", id);
+    const incidentUpdateRow = {
+      status: newStatus,
+      severity: newSeverity,
+      confidence: newConfidence,
+      resolved_at: resolvedAt,
+      updated_at: new Date().toISOString(),
+      last_verified_at: new Date().toISOString(),
+      needs_verification: false
+    };
+
+    let errUpdate = (
+      await supabase
+        .from("incidents")
+        .update(incidentUpdateRow)
+        .eq("id", id)
+    ).error;
+
+    if (isMissingColumnError(errUpdate)) {
+      errUpdate = (
+        await supabase
+          .from("incidents")
+          .update({
+            status: newStatus,
+            severity: newSeverity,
+            confidence: newConfidence,
+            resolved_at: resolvedAt,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", id)
+      ).error;
+    }
 
     if (errUpdate) {
       return NextResponse.json({ error: errUpdate.message }, { status: 500 });
@@ -146,7 +185,7 @@ export async function POST(request: Request, context: any) {
         user_id: reporter.trim(),
         action: "Verify",
         target_table: "incident_verifications",
-        target_id: id,
+        target_id: insertedVerification?.id ?? id,
         new_value: { vote, reporter }
       }]);
 
