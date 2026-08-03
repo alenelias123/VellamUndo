@@ -346,7 +346,7 @@ export default function HomeClient() {
           aria-label="Vellam Undo — open route planner"
         >
           <span className="brand-mark rounded-lg flex items-center justify-center shrink-0">
-            <ShieldCheck size={20} />
+            <img src="/favicon.png" alt="Vellam Undo" className="brand-mark-img" />
           </span>
           <div className="leading-tight">
             <h1>Vellam Undo</h1>

@@ -4,7 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Vellam Undo",
   description: "Flood reporting and safer re-navigation for Kerala.",
-  manifest: "/manifest.json"
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/favicon.png"
+  }
 };
 
 export const viewport: Viewport = {
