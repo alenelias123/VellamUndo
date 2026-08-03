@@ -370,6 +370,59 @@ export async function GET(request: Request) {
 }
 
 // POST to create a report (handles nearby duplicate clustering within 500m)
+function resolveRoleValue(userLike: any): string {
+  const candidates = [
+    userLike?.user_metadata?.role,
+    userLike?.app_metadata?.role,
+    userLike?.raw_user_meta_data?.role,
+    userLike?.raw_app_meta_data?.role
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.toLowerCase();
+    }
+  }
+
+  return "";
+}
+
+function isWhitelistedAdminEmail(emailLike: unknown): boolean {
+  if (typeof emailLike !== "string") {
+    return false;
+  }
+
+  const email = emailLike.toLowerCase().trim();
+  return email === "admin@vellamundo.org" || email === "9745093032p@gmail.com" || email === "aleneliascherian@gmail.com";
+}
+
+function isAdminUser(user: any): boolean {
+  const email = (user?.email ?? "").toLowerCase();
+  const role = resolveRoleValue(user);
+
+  return role === "admin" || isWhitelistedAdminEmail(email);
+}
+
+function resolveManualTimestamp(input: unknown): string | null {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    return null;
+  }
+
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Invalid manual timestamp");
+  }
+  if (parsed.getTime() > Date.now()) {
+    throw new Error("Manual timestamp cannot be in the future");
+  }
+
+  return parsed.toISOString();
+}
+
+function isMissingColumnError(error: { code?: string | null } | null | undefined): boolean {
+  return error?.code === "42703";
+}
+
 export async function POST(request: Request) {
   if (!supabase) {
     return NextResponse.json({ error: "Supabase client is not initialized" }, { status: 503 });
@@ -383,10 +436,13 @@ export async function POST(request: Request) {
       severity,
       notes,
       reporter,
+      photos = [],
       type,
       roadName,
       landmark,
       district,
+      manualTimestamp,
+      requesterEmail,
       elevationMeters,
       floodStartLat,
       floodStartLng,
@@ -399,21 +455,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Server-side auth check
     const cookieStore = await cookies();
     const supabaseServer = createServerSupabase(cookieStore);
     const { data: { user } } = await supabaseServer.auth.getUser();
 
     const isGuest = !user;
+    const isAdmin = isAdminUser(user) || isWhitelistedAdminEmail(requesterEmail);
     const userId = user ? user.id : null;
     const finalReporter = user
       ? (user.user_metadata?.full_name || user.email || reporter || "Authenticated user")
       : (reporter || "Community reporter");
     const ownershipToken = isGuest ? crypto.randomUUID() : null;
 
-    // 1. Check for nearby active incidents within ~500m
-    const latDelta = 0.0045; // ~500m lat variance
-    const lngDelta = 0.0045; // ~500m lng variance
+    if (manualTimestamp && !isAdmin) {
+      return NextResponse.json({ error: "Only admins can set a manual timestamp" }, { status: 403 });
+    }
+
+    let effectiveReportTimestamp = new Date().toISOString();
+    try {
+      effectiveReportTimestamp = resolveManualTimestamp(manualTimestamp) ?? effectiveReportTimestamp;
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message || "Invalid manual timestamp" }, { status: 400 });
+    }
+
+    const latDelta = 0.0045;
+    const lngDelta = 0.0045;
     const { data: nearbyIncidents } = await supabase
       .from("incidents")
       .select("*")
@@ -427,7 +493,7 @@ export async function POST(request: Request) {
     let targetIncident: any = null;
 
     if (nearbyIncidents && nearbyIncidents.length > 0) {
-      let minDistance = 0.5; // 500m limit
+      let minDistance = 0.5;
       for (const inc of nearbyIncidents) {
         const dist = haversineDistanceKm(latitude, longitude, inc.latitude, inc.longitude);
         if (dist <= minDistance) {
@@ -444,7 +510,6 @@ export async function POST(request: Request) {
       incidentId = targetIncident.id;
     } else {
       isNewIncident = true;
-      // Insert new Incident
       const insertRow: Record<string, any> = {
         type,
         status: "active",
@@ -454,7 +519,8 @@ export async function POST(request: Request) {
         district,
         latitude,
         longitude,
-        confidence: 45 // base starting confidence
+        confidence: 45,
+        created_at: effectiveReportTimestamp
       };
       if (elevationMeters !== undefined) insertRow.elevation_meters = elevationMeters;
       if (floodStartLat !== undefined) insertRow.flood_start_lat = floodStartLat;
@@ -498,7 +564,6 @@ export async function POST(request: Request) {
       }
       incidentId = newInc.id;
 
-      // Log incident creation
       await supabase
         .from("audit_logs")
         .insert([{
@@ -511,26 +576,46 @@ export async function POST(request: Request) {
         }]);
     }
 
-    // 2. Insert the child Report
-    const { data: newRep, error: errNewRep } = await supabase
+    const reportInsertRow: Record<string, any> = {
+      incident_id: incidentId,
+      severity,
+      notes,
+      reporter: finalReporter,
+      is_guest_report: isGuest,
+      ownership_token: ownershipToken,
+      reporter_id: userId,
+      created_at: effectiveReportTimestamp
+    };
+
+    let { data: newRep, error: errNewRep } = await supabase
       .from("incident_reports")
-      .insert([{
+      .insert([reportInsertRow])
+      .select()
+      .single();
+
+    if (isMissingColumnError(errNewRep)) {
+      const fallbackReportRow = {
         incident_id: incidentId,
         severity,
         notes,
         reporter: finalReporter,
-        is_guest_report: isGuest,
-        ownership_token: ownershipToken,
-        reporter_id: userId
-      }])
-      .select()
-      .single();
+        created_at: effectiveReportTimestamp
+      };
+
+      const fallbackInsert = await supabase
+        .from("incident_reports")
+        .insert([fallbackReportRow])
+        .select()
+        .single();
+
+      newRep = fallbackInsert.data;
+      errNewRep = fallbackInsert.error;
+    }
 
     if (errNewRep || !newRep) {
       return NextResponse.json({ error: errNewRep?.message || "Failed to create report" }, { status: 500 });
     }
 
-    // Log report creation audit
     await supabase
       .from("audit_logs")
       .insert([{
@@ -542,17 +627,40 @@ export async function POST(request: Request) {
         new_value: { severity, notes, reporter: finalReporter }
       }]);
 
-    // 3. Recalculate Incident Severity and Confidence
-    const { data: allReports } = await supabase
+    if (photos.length > 0) {
+      const imageRows = photos.map((url: string) => ({
+        report_id: newRep.id,
+        image_url: url
+      }));
+      const { error: errImg } = await supabase.from("incident_images").insert(imageRows);
+      if (errImg) {
+        console.error("Failed to insert report images:", errImg.message);
+      }
+    }
+
+    let allReportsQuery = await supabase
       .from("incident_reports")
       .select("*, incident_images(*)")
       .eq("incident_id", incidentId)
       .is("deleted_at", null);
 
+    if (isMissingColumnError(allReportsQuery.error)) {
+      allReportsQuery = await supabase
+        .from("incident_reports")
+        .select("*, incident_images(*)")
+        .eq("incident_id", incidentId);
+    }
+
+    const { data: allReports, error: allReportsError } = allReportsQuery;
+
     const { data: allVerifications } = await supabase
       .from("incident_verifications")
       .select("*")
       .eq("incident_id", incidentId);
+
+    if (allReportsError) {
+      console.error("Failed to reload incident reports after insert:", allReportsError.message);
+    }
 
     const reportArray = (allReports || []).map((r: any) => ({
       reporter: r.reporter,
@@ -564,23 +672,40 @@ export async function POST(request: Request) {
       reporter: v.reporter
     }));
 
-    const currentIncidentCreatedAt = targetIncident ? targetIncident.created_at : new Date().toISOString();
+    const currentIncidentCreatedAt = targetIncident ? targetIncident.created_at : effectiveReportTimestamp;
     const newConfidence = calculateIncidentConfidence(reportArray, verifArray, currentIncidentCreatedAt);
 
     const severities = (allReports || []).map((r: any) => r.severity as SeverityLevel);
     const highestSeverity = getHighestSeverity(severities);
 
-    // Update parent Incident
-    const { error: errIncUpdate } = await supabase
+    let errIncUpdate: { message?: string | null; code?: string | null } | null = null;
+    const incidentUpdateRow = {
+      severity: highestSeverity,
+      confidence: newConfidence,
+      updated_at: new Date().toISOString(),
+      last_report_at: effectiveReportTimestamp,
+      needs_verification: false
+    };
+
+    const primaryIncidentUpdate = await supabase
       .from("incidents")
-      .update({
-        severity: highestSeverity,
-        confidence: newConfidence,
-        updated_at: new Date().toISOString(),
-        last_report_at: new Date().toISOString(),
-        needs_verification: false
-      })
+      .update(incidentUpdateRow)
       .eq("id", incidentId);
+
+    errIncUpdate = primaryIncidentUpdate.error;
+
+    if (isMissingColumnError(errIncUpdate)) {
+      const fallbackIncidentUpdate = await supabase
+        .from("incidents")
+        .update({
+          severity: highestSeverity,
+          confidence: newConfidence,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", incidentId);
+
+      errIncUpdate = fallbackIncidentUpdate.error;
+    }
 
     if (errIncUpdate) {
       console.error("Failed to update parent incident severity/confidence:", errIncUpdate.message);

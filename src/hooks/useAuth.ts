@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+export type AuthUserRole = "admin" | "moderator" | "user";
+
 export type AuthUser = {
   id: string;
   email: string;
   name: string;
   avatarUrl?: string;
+  role: AuthUserRole;
   /** true = signed in via real Supabase Google OAuth */
   isReal: boolean;
 };
@@ -20,10 +23,8 @@ type AuthState = {
 export function useAuth() {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
-  // ── Supabase session bootstrap ──────────────────────────────────────
   useEffect(() => {
     if (!supabase) {
-      // No Supabase configured — check for demo session in localStorage
       try {
         const raw = window.localStorage.getItem("vu-demo-auth");
         if (raw) setState({ user: JSON.parse(raw), loading: false });
@@ -34,7 +35,6 @@ export function useAuth() {
       return;
     }
 
-    // Real Supabase: get current session
     supabase.auth.getSession().then(({ data }) => {
       setState({
         user: sessionToUser(data.session),
@@ -42,7 +42,6 @@ export function useAuth() {
       });
     });
 
-    // Listen for sign-in / sign-out events
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setState({ user: sessionToUser(session), loading: false });
     });
@@ -50,15 +49,14 @@ export function useAuth() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // ── Google OAuth sign-in ────────────────────────────────────────────
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) {
-      // Demo fallback: simulate a signed-in user
       const demoUser: AuthUser = {
         id: "demo-" + Math.random().toString(36).slice(2, 8),
         email: "demo.verifier@vellamundo.org",
         name: "Demo Verifier",
         avatarUrl: undefined,
+        role: "user",
         isReal: false
       };
       window.localStorage.setItem("vu-demo-auth", JSON.stringify(demoUser));
@@ -74,7 +72,6 @@ export function useAuth() {
     });
   }, []);
 
-  // ── Sign-out ────────────────────────────────────────────────────────
   const signOut = useCallback(async () => {
     if (!supabase) {
       window.localStorage.removeItem("vu-demo-auth");
@@ -106,6 +103,43 @@ function sessionToUser(session: any): AuthUser | null {
       u.email?.split("@")[0] ??
       "User",
     avatarUrl: u.user_metadata?.avatar_url,
+    role: getUserRole(u),
     isReal: true
   };
+}
+
+function resolveRoleValue(userLike: any): string {
+  const candidates = [
+    userLike?.user_metadata?.role,
+    userLike?.app_metadata?.role,
+    userLike?.raw_user_meta_data?.role,
+    userLike?.raw_app_meta_data?.role
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.toLowerCase();
+    }
+  }
+
+  return "";
+}
+
+function getUserRole(userLike: any): AuthUserRole {
+  const normalizedEmail = (userLike?.email ?? "").toLowerCase();
+  const normalizedRole = resolveRoleValue(userLike);
+
+  if (normalizedRole === "admin" || normalizedEmail === "admin@vellamundo.org" || normalizedEmail === "9745093032p@gmail.com" || normalizedEmail === "aleneliascherian@gmail.com") {
+    return "admin";
+  }
+
+  if (
+    normalizedRole === "moderator" ||
+    normalizedEmail.includes("moderator") ||
+    normalizedEmail.endsWith("@volunteer.vellamundo.org")
+  ) {
+    return "moderator";
+  }
+
+  return "user";
 }

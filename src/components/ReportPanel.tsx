@@ -14,6 +14,7 @@ import {
   X
 } from "lucide-react";
 import { useLocationSearch } from "@/hooks/useLocationSearch";
+import { useAuth } from "@/hooks/useAuth";
 import { incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import { getElevationAt } from "@/lib/elevation";
 import { haversineDistanceKm, type SearchResultPlace } from "@/lib/routing";
@@ -43,6 +44,8 @@ type OfflineReportPayload = {
   roadSnapDistance?: number;
   locationConfidence?: number;
   resolvedRoadName?: string;
+  manualTimestamp?: string;
+  requesterEmail?: string;
 };
 
 type ReportPanelProps = {
@@ -90,11 +93,13 @@ export function ReportPanel({
   const [severity, setSeverity] = useState<SeverityLevel>("WATERLOGGED");
   const [notes, setNotes] = useState("");
   const [reporter, setReporter] = useState("");
+  const [manualTimestamp, setManualTimestamp] = useState("");
   const [elevationMeters, setElevationMeters] = useState<number | undefined>();
 
   // Custom location search state
   const location$ = useLocationSearch();
   const locationQuery = location$.query;
+  const { user } = useAuth();
 
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -352,6 +357,18 @@ export function ReportPanel({
       return;
     }
 
+    if (user?.role === "admin" && manualTimestamp) {
+      const parsedManualTime = new Date(manualTimestamp);
+      if (Number.isNaN(parsedManualTime.getTime())) {
+        alert("Enter a valid timestamp.");
+        return;
+      }
+      if (parsedManualTime.getTime() > Date.now()) {
+        alert("Manual timestamp cannot be in the future.");
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setSubmitSuccess(false);
 
@@ -379,17 +396,27 @@ export function ReportPanel({
       snappedLongitude: snappedCoords?.lng || undefined,
       roadSnapDistance: roadSnapDistance,
       locationConfidence: locationConfidence,
-      resolvedRoadName: resolvedRoadName || roadName
+      resolvedRoadName: resolvedRoadName || roadName,
+      manualTimestamp:
+        user?.role === "admin" && manualTimestamp
+          ? new Date(manualTimestamp).toISOString()
+          : undefined,
+      requesterEmail: user?.email || undefined
     };
 
     try {
-      await onSubmit(payload);
-      setSubmitSuccess(true);
-      setNotes("");
-      onStretchReset?.();
-      setTimeout(() => setSubmitSuccess(false), 3000);
-    } catch {
-      alert("Submission error. Saved locally to sync later.");
+      const persisted = await onSubmit(payload);
+      if (persisted) {
+        setSubmitSuccess(true);
+        setNotes("");
+        setManualTimestamp("");
+        onStretchReset?.();
+        setTimeout(() => setSubmitSuccess(false), 3000);
+      } else {
+        alert("Report saved locally and will sync when the connection is available.");
+      }
+    } catch (error: any) {
+      alert(error?.message || "Submission failed.");
     } finally {
       setIsSubmitting(false);
     }
@@ -778,6 +805,22 @@ export function ReportPanel({
             />
           </label>
 
+          {user?.role === "admin" ? (
+            <label className="span-2">
+              Manual Report Timestamp
+              <input
+                type="datetime-local"
+                value={manualTimestamp}
+                onChange={(e) => setManualTimestamp(e.target.value)}
+                max={new Date().toISOString().slice(0, 16)}
+              />
+              <small className="text-slate-500">
+                Admin only. Leave empty to use the current server time.
+              </small>
+            </label>
+          ) : null}
+
+
           {/* ── Success feedback ───────────────────────────── */}
           {submitSuccess ? (
             <div className="span-2 report-banner report-banner--success">
@@ -810,3 +853,9 @@ export function ReportPanel({
     </section>
   );
 }
+
+
+
+
+
+

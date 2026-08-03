@@ -88,6 +88,8 @@ export type OfflineReportPayload = {
   roadSnapDistance?: number;
   locationConfidence?: number;
   resolvedRoadName?: string;
+  manualTimestamp?: string;
+  requesterEmail?: string;
 };
 
 export function useEmergencyStore() {
@@ -268,6 +270,7 @@ export function useEmergencyStore() {
     analytics,
 
     // Add flood report - checks connectivity & handles offline queueing
+    // Add flood report - checks connectivity & handles offline queueing
     async addReport(input: OfflineReportPayload) {
       if (navigator.onLine) {
         try {
@@ -290,7 +293,22 @@ export function useEmergencyStore() {
             await fetchIncidents();
             return true;
           }
+
+          let message = "Failed to submit report";
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string") {
+              message = data.error;
+            }
+          } catch {
+            // Ignore JSON parse failures and use the default message.
+          }
+
+          throw new Error(message);
         } catch (err) {
+          if (err instanceof Error && navigator.onLine) {
+            throw err;
+          }
           console.warn("Failed to POST report online, fallback to queueing:", err);
         }
       }
@@ -298,8 +316,8 @@ export function useEmergencyStore() {
       // Offline or network post failed -> Queue report locally
       const updatedQueue = [...offlineQueue, input];
       setOfflineQueue(updatedQueue);
-
       // Create a temporary local incident in store to reflect immediately
+      const localCreatedAt = input.manualTimestamp || new Date().toISOString();
       const tempId = `temp-${crypto.randomUUID()}`;
       const newLocalIncident: Incident = {
         id: tempId,
@@ -320,7 +338,7 @@ export function useEmergencyStore() {
         floodEndLng: input.floodEndLng,
         floodStretchPath: input.floodStretchPath,
         confidence: 30, // low confidence for offline temp items
-        createdAt: new Date().toISOString(),
+        createdAt: localCreatedAt,
         updatedAt: new Date().toISOString(),
         reports: [
           {
@@ -329,7 +347,7 @@ export function useEmergencyStore() {
             severity: input.severity,
             notes: input.notes,
             reporter: input.reporter,
-            createdAt: new Date().toISOString(),
+            createdAt: localCreatedAt,
             photos: input.photos
           }
         ],
@@ -530,3 +548,8 @@ export function useEmergencyStore() {
     }
   };
 }
+
+
+
+
+
