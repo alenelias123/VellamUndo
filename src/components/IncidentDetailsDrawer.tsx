@@ -6,10 +6,11 @@ import {
   CheckCircle2,
   CheckSquare,
   Clock,
-  History,
-  Loader2,
+  Clock3,
+  Edit,
   Lock,
   LogIn,
+  MapPin,
   Megaphone,
   Pencil,
   Save,
@@ -20,11 +21,6 @@ import {
   Users,
   Waves,
   X,
-  Edit,
-  AlertTriangle,
-  HelpCircle,
-  Clock3,
-  MapPin,
   type LucideIcon
 } from "lucide-react";
 import { formatRelativeTime, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
@@ -93,6 +89,24 @@ type TimelineEvent = {
   reportObj?: IncidentReport;
 };
 
+type StatCardProps = {
+  icon: LucideIcon;
+  value: React.ReactNode;
+  label: string;
+  sub?: React.ReactNode;
+};
+
+function StatCard({ icon: Icon, value, label, sub }: StatCardProps) {
+  return (
+    <div className="incident-stat">
+      <span className="incident-stat-icon"><Icon size={13} /></span>
+      <strong>{value}</strong>
+      <span className="incident-stat-label">{label}</span>
+      {sub ? <small>{sub}</small> : null}
+    </div>
+  );
+}
+
 export function IncidentDetailsDrawer({
   incident,
   user,
@@ -124,7 +138,7 @@ export function IncidentDetailsDrawer({
 
   // Guest ownership tokens from localStorage
   const [localTokens, setLocalTokens] = useState<Record<string, string>>({});
-  
+
   // Inline edit state
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [editNotes, setEditNotes] = useState("");
@@ -173,11 +187,7 @@ export function IncidentDetailsDrawer({
     return { isVerified: topCount >= 2, dominant, total };
   }, [voteCounts]);
 
-  const allPhotos = useMemo(() => {
-    return incident.reports?.flatMap((r) => r.photos ?? []) ?? [];
-  }, [incident.reports]);
-
-  // Expose Freshness (Feature 3)
+  // Expose Freshness
   const freshness = useMemo(() => {
     const updatedAtTime = new Date(incident.updatedAt || incident.createdAt).getTime();
     const elapsedMs = Date.now() - updatedAtTime;
@@ -189,7 +199,7 @@ export function IncidentDetailsDrawer({
         color: "#b91c1c",
         bg: "#fef2f2",
         border: "#fca5a5",
-        icon: AlertTriangle
+        icon: Clock3
       };
     }
     if (elapsedHours < 0.5) {
@@ -228,7 +238,7 @@ export function IncidentDetailsDrawer({
     };
   }, [incident.updatedAt, incident.createdAt, incident.needsVerification]);
 
-  // Chronological timeline newest first (Feature 2)
+  // Chronological timeline newest first
   const timelineEvents = useMemo((): TimelineEvent[] => {
     const list: TimelineEvent[] = [];
 
@@ -297,29 +307,24 @@ export function IncidentDetailsDrawer({
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }, [incident.reports, incident.verifications, incident.auditLogs]);
 
-  // Report Explanation calculation (Feature 11)
-  const reportExplanation = useMemo(() => {
+  // Quick stats data
+  const stats = useMemo(() => {
     const totalReports = incident.reports?.length ?? 0;
     const uniqueUsers = new Set(
       incident.reports?.map((r) => r.reporter.toLowerCase().trim())
     ).size;
-    const hasVolunteer =
-      incident.reports?.some(
-        (r) => r.reporter.toLowerCase().includes("volunteer") || r.reporter.toLowerCase().includes("admin")
-      ) ||
-      incident.verifications?.some(
-        (v) => v.reporter.toLowerCase().includes("volunteer") || v.reporter.toLowerCase().includes("admin")
-      );
+    const lastReportTime = incident.lastReportAt || incident.updatedAt || incident.createdAt;
+    const dominantVote = verif.dominant
+      ? voteOptions.find((v) => v.id === verif.dominant)?.label
+      : null;
 
     return {
-      type: incident.type,
-      severityText: sevMeta.label,
       totalReports,
       uniqueUsers,
-      volunteerVerified: hasVolunteer,
-      confidence: incident.confidence
+      lastReportTime,
+      dominantVote
     };
-  }, [incident, sevMeta]);
+  }, [incident, verif]);
 
   async function handleVote(vote: VerificationVote) {
     if (!user) {
@@ -337,6 +342,14 @@ export function IncidentDetailsDrawer({
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function requireManage(action: () => void) {
+    if (!user) {
+      onOpenAuth();
+      return;
+    }
+    action();
   }
 
   function startEditing() {
@@ -425,71 +438,69 @@ export function IncidentDetailsDrawer({
         </button>
       </div>
 
-      {/* ── Freshness Warning and Status Badges ─────────── */}
-      <div className="incident-badges flex flex-wrap gap-2 mb-4">
-        {/* Freshness Badge (Feature 3) */}
+      {/* ── Status badges ───────────────────────────────── */}
+      <div className="incident-badges">
         <span
-          className="incident-freshness-badge px-2 py-1 rounded text-xs font-semibold flex items-center gap-1"
+          className="incident-freshness-badge"
           style={{
             background: freshness.bg,
             color: freshness.color,
             border: `1px solid ${freshness.border}`
           }}
         >
-          {<freshness.icon size={12} />} {freshness.label}
+          <freshness.icon size={12} /> {freshness.label}
         </span>
 
         <span className="incident-severity-badge" style={{ background: sevMeta.color }}>
           {sevMeta.label}
         </span>
 
-        <span className="incident-status-badge text-xs uppercase font-bold" data-status={incident.status}>
+        <span className="incident-status-badge" data-status={incident.status}>
           {incident.status}
         </span>
 
         {verif.isVerified && (
-          <span className="incident-verified-badge bg-green-50 text-green-700 px-2 py-1 rounded text-xs font-semibold flex items-center gap-1">
+          <span className="incident-verified-badge">
             <CheckCircle2 size={12} />
             Community verified
           </span>
         )}
       </div>
 
-      {/* Parent Management actions (Feature 6 & admin/moderator actions) */}
-      {userRole === "admin" || userRole === "moderator" ? (
-        !isEditing && !isDeleteConfirming ? (
-          <div className="incident-manage-bar mb-3 flex gap-2">
-            <button
-              type="button"
-              className="incident-manage-btn flex items-center gap-1 text-xs font-semibold bg-white hover:bg-teal-50 border border-teal-200 rounded px-2.5 py-1 text-teal-800"
-              onClick={startEditing}
-            >
-              <Pencil size={12} />
-              Edit Incident
-            </button>
-            <button
-              type="button"
-              className="incident-manage-btn incident-manage-btn--danger flex items-center gap-1 text-xs font-semibold bg-red-50 hover:bg-red-100 border border-red-200 rounded px-2.5 py-1 text-red-700"
-              onClick={() => { setIsDeleteConfirming(true); setEditError(""); }}
-            >
-              <Trash2 size={12} />
-              Delete Incident
-            </button>
-          </div>
-        ) : null
-      ) : null}
+      {/* ── Edit / Delete incident buttons ──────────────── */}
+      {!isEditing && !isDeleteConfirming && (
+        <div className="incident-manage-bar">
+          <button
+            type="button"
+            className="incident-manage-btn incident-manage-btn--primary"
+            onClick={() => requireManage(startEditing)}
+          >
+            <Pencil size={13} />
+            Edit Incident
+          </button>
+          <button
+            type="button"
+            className="incident-manage-btn incident-manage-btn--danger"
+            onClick={() => requireManage(() => { setEditError(""); setIsDeleteConfirming(true); })}
+          >
+            <Trash2 size={13} />
+            Delete Incident
+          </button>
+          {!user ? <span className="incident-manage-hint">Sign in to edit or delete</span> : null}
+        </div>
+      )}
 
       {isDeleteConfirming && (
-        <div className="incident-delete-confirm bg-red-50 border border-red-200 rounded p-3 mb-4 text-xs">
-          <p className="incident-delete-confirm-title font-bold text-red-800 mb-1">Delete this incident?</p>
-          <p className="incident-delete-confirm-sub text-red-600 mb-2">
-            This permanently removes “{incident.roadName}” and all its reports.
+        <div className="incident-delete-confirm">
+          <p className="incident-delete-confirm-title">Delete this incident?</p>
+          <p className="incident-delete-confirm-sub">
+            This permanently removes “{incident.roadName}” and all of its reports.
           </p>
-          {editError ? <p className="incident-edit-error text-red-700 font-bold mb-2">{editError}</p> : null}
-          <div className="incident-delete-confirm-actions flex gap-2 justify-end">
+          {editError ? <p className="incident-edit-error">{editError}</p> : null}
+          <div className="incident-delete-confirm-actions">
             <button
               type="button"
-              className="px-2 py-1 bg-white border border-slate-300 rounded font-semibold text-slate-700"
+              className="incident-btn incident-btn--secondary"
               onClick={() => { setIsDeleteConfirming(false); setEditError(""); }}
               disabled={isSavingParentEdit}
             >
@@ -497,7 +508,7 @@ export function IncidentDetailsDrawer({
             </button>
             <button
               type="button"
-              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded font-semibold"
+              className="incident-btn incident-btn--danger"
               onClick={() => void handleConfirmDelete()}
               disabled={isSavingParentEdit}
             >
@@ -508,40 +519,40 @@ export function IncidentDetailsDrawer({
       )}
 
       {isEditing && (
-        <form className="incident-edit-form bg-teal-50/40 border border-teal-100 rounded p-3 mb-4 text-xs flex flex-col gap-2" onSubmit={handleSaveEdit}>
-          <p className="font-bold text-teal-900 uppercase tracking-wider border-b border-teal-100 pb-1 mb-1">Edit incident</p>
+        <form className="incident-edit-form" onSubmit={handleSaveEdit}>
+          <p className="incident-edit-title">Edit incident</p>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">Road / River</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">Road / River</span>
             <input
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.roadName}
               onChange={(e) => setEditForm((f) => ({ ...f, roadName: e.target.value }))}
             />
           </div>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">Landmark</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">Landmark</span>
             <input
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.landmark}
               onChange={(e) => setEditForm((f) => ({ ...f, landmark: e.target.value }))}
             />
           </div>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">District</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">District</span>
             <input
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.district}
               onChange={(e) => setEditForm((f) => ({ ...f, district: e.target.value }))}
             />
           </div>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">Incident Type</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">Incident Type</span>
             <select
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.type}
               onChange={(e) => setEditForm((f) => ({ ...f, type: e.target.value as IncidentType }))}
             >
@@ -551,10 +562,10 @@ export function IncidentDetailsDrawer({
             </select>
           </div>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">Severity</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">Severity</span>
             <select
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.severity}
               onChange={(e) => setEditForm((f) => ({ ...f, severity: e.target.value as SeverityLevel }))}
             >
@@ -564,10 +575,10 @@ export function IncidentDetailsDrawer({
             </select>
           </div>
 
-          <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-slate-500">Status</span>
+          <div className="incident-edit-field">
+            <span className="incident-edit-label">Status</span>
             <select
-              className="p-1 border border-slate-300 rounded bg-white text-xs"
+              className="incident-edit-input"
               value={editForm.status}
               onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as IncidentStatus }))}
             >
@@ -577,12 +588,12 @@ export function IncidentDetailsDrawer({
             </select>
           </div>
 
-          {editError ? <p className="incident-edit-error text-red-700 font-bold">{editError}</p> : null}
+          {editError ? <p className="incident-edit-error">{editError}</p> : null}
 
-          <div className="incident-edit-form-actions flex gap-2 justify-end mt-2">
+          <div className="incident-edit-form-actions">
             <button
               type="button"
-              className="px-2 py-1 bg-white border border-slate-300 rounded font-semibold text-slate-700"
+              className="incident-btn incident-btn--secondary"
               onClick={() => { setIsEditing(false); setEditError(""); }}
               disabled={isSavingParentEdit}
             >
@@ -590,7 +601,7 @@ export function IncidentDetailsDrawer({
             </button>
             <button
               type="submit"
-              className="px-2 py-1 bg-teal-700 hover:bg-teal-600 text-white rounded font-semibold"
+              className="incident-btn incident-btn--primary"
               disabled={isSavingParentEdit}
             >
               {isSavingParentEdit ? "Saving..." : "Save changes"}
@@ -599,323 +610,236 @@ export function IncidentDetailsDrawer({
         </form>
       )}
 
-      {/* ── Report Explanation Box (Feature 11) ─────────── */}
-      <div className="report-explanation-box bg-teal-50/40 p-3 rounded-lg border border-teal-100 mb-4">
-        <h4 className="font-bold text-teal-800 flex items-center gap-1 mb-1.5 text-xs uppercase tracking-wide">
-          <HelpCircle size={13} /> Why is this active?
-        </h4>
-        <p className="text-xs text-teal-900 leading-relaxed mb-2">
-          Active due to <strong>{reportExplanation.severityText}</strong> conditions.
-          {reportExplanation.volunteerVerified && (
-            <span className="text-teal-700"> · Verified by volunteers.</span>
-          )}
-        </p>
-        <div className="report-explain-grid">
-          <div className="report-explain-stat">
-            <Megaphone size={12} className="text-teal-600" />
-            <strong>{reportExplanation.totalReports}</strong>
-            <span>reports</span>
-          </div>
-          <div className="report-explain-stat">
-            <Users size={12} className="text-teal-600" />
-            <strong>{reportExplanation.uniqueUsers}</strong>
-            <span>users</span>
-          </div>
-          <div className="report-explain-stat">
-            <Clock size={12} className="text-teal-600" />
-            <strong>{shortRelativeTime(incident.updatedAt || incident.createdAt)}</strong>
-            <span>updated</span>
-          </div>
-          <div className="report-explain-stat">
-            <ShieldCheck size={12} className="text-teal-600" />
-            <strong>{reportExplanation.confidence}%</strong>
-            <span>trust</span>
-          </div>
-        </div>
+      {/* ── Quick stats ─────────────────────────────────── */}
+      <div className="incident-quick-stats">
+        <StatCard
+          icon={Megaphone}
+          value={stats.totalReports}
+          label="Reports"
+          sub={`Last ${shortRelativeTime(stats.lastReportTime)}`}
+        />
+        <StatCard
+          icon={ShieldCheck}
+          value={`${incident.confidence}%`}
+          label="Confidence"
+          sub={`${stats.uniqueUsers} reporter${stats.uniqueUsers === 1 ? "" : "s"}`}
+        />
+        <StatCard
+          icon={Users}
+          value={verif.total}
+          label="Verifications"
+          sub={stats.dominantVote ? `Mostly "${stats.dominantVote}"` : "No votes yet"}
+        />
+        <StatCard
+          icon={Clock3}
+          value={shortRelativeTime(incident.updatedAt || incident.createdAt)}
+          label="Last Updated"
+          sub={freshness.label}
+        />
       </div>
 
-      {/* ── Verification summary bar ─────────────────────── */}
-      {verif.total > 0 && (
-        <div className="incident-verif-bar bg-teal-50/40 border border-teal-100 rounded p-3 mb-4 text-xs">
-          <p className="incident-verif-bar-label font-bold text-teal-900 mb-1 flex items-center gap-1">
-            <CheckSquare size={12} />
-            {verif.total} community verification{verif.total > 1 ? "s" : ""}
-            {verif.dominant ? ` — most say "${voteOptions.find(v => v.id === verif.dominant)?.label}"` : ""}
-          </p>
-          <div className="incident-verif-votes flex flex-wrap gap-1.5 mt-2">
-            {voteOptions.map((opt) => {
-              const count = voteCounts[opt.id];
-              if (count === 0) return null;
-              return (
-                <span
-                  key={opt.id}
-                  className="incident-verif-vote-chip border px-2 py-0.5 rounded text-[10px] font-semibold"
-                  style={{ background: opt.bg, color: opt.text, borderColor: opt.border }}
-                >
-                  {<opt.icon size={12} />} {opt.label} <strong>×{count}</strong>
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── Expose Timestamps (Feature 1) ───────────────── */}
-      <div className="incident-timestamps text-xs text-slate-600 mb-4 grid grid-cols-2 gap-1 border-b border-slate-100 pb-3">
-        <div className="flex items-center gap-1">
-          <Clock size={12} className="text-teal-600 shrink-0" /> First reported: {formatRelativeTime(incident.createdAt)}
-        </div>
-        <div className="flex items-center gap-1">
-          <History size={12} className="text-teal-600 shrink-0" /> Last updated: {formatRelativeTime(incident.updatedAt || incident.createdAt)}
-        </div>
-        {incident.lastVerifiedAt && (
-          <div className="flex items-center gap-1">
-            <BadgeCheck size={12} className="text-teal-600 shrink-0" /> Last verified: {formatRelativeTime(incident.lastVerifiedAt)}
-          </div>
-        )}
-        {incident.lastReportAt && (
-          <div className="flex items-center gap-1">
-            <Megaphone size={12} className="text-teal-600 shrink-0" /> Last report added: {formatRelativeTime(incident.lastReportAt)}
-          </div>
-        )}
-      </div>
-
-      {/* ── Photo Gallery ───────────────────────────────── */}
-      {allPhotos.length > 0 && (
-        <div className="incident-photos mb-4">
-          <p className="eyebrow text-xs uppercase text-slate-400 font-bold mb-2">Evidence photos</p>
-          <div className="incident-photo-scroll flex gap-2 overflow-x-auto pb-2">
-            {allPhotos.map((url, i) => (
-              <a
-                key={i}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="incident-photo-thumb block w-20 h-20 rounded overflow-hidden border border-slate-200 flex-shrink-0"
-              >
-                <img src={url} alt={`Evidence ${i + 1}`} className="w-full h-full object-cover" />
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Chronological Timeline Newest First (Feature 2) ── */}
-      <div className="incident-timeline mb-4">
-        <p className="eyebrow text-xs uppercase text-slate-400 font-bold mb-3 flex items-center gap-1">
+      {/* ── Timeline ────────────────────────────────────── */}
+      <div className="incident-timeline">
+        <p className="eyebrow">
           <Clock size={12} />
           Incident Timeline ({timelineEvents.length})
         </p>
 
-        <div className="incident-timeline-list flex flex-col gap-3 relative before:content-[''] before:absolute before:left-4 before:top-2 before:bottom-2 before:w-0.5 before:bg-teal-200">
-          {timelineEvents.map((event) => {
-            const isReport = event.reportObj !== undefined;
-            const rObj = event.reportObj;
+        {timelineEvents.length === 0 ? (
+          <p className="incident-timeline-notes incident-timeline-notes--empty">
+            No reports or verifications yet for this incident.
+          </p>
+        ) : (
+          <div className="incident-timeline-list">
+            {timelineEvents.map((event) => {
+              const isReport = event.reportObj !== undefined;
+              const rObj = event.reportObj;
 
-            // Auth verification checks for editing/deleting (Features 5 & 6)
-            let showActions = false;
-            let isGuestTokenValid = false;
+              // Auth verification checks for editing/deleting a report
+              let showActions = false;
+              let isGuestTokenValid = false;
 
-            if (isReport && rObj) {
-              if (userRole === "admin") {
-                showActions = true;
-              } else if (userRole === "moderator") {
-                showActions = true;
-              } else if (user && rObj.reporterId === user.id) {
-                showActions = true;
-              } else if (rObj.isGuestReport && localTokens[rObj.id]) {
-                // Verify 5-minute guest ownership window
-                const elapsedMin = (Date.now() - new Date(rObj.createdAt).getTime()) / (1000 * 60);
-                if (elapsedMin <= 5) {
+              if (isReport && rObj) {
+                if (userRole === "admin") {
                   showActions = true;
-                  isGuestTokenValid = true;
+                } else if (userRole === "moderator") {
+                  showActions = true;
+                } else if (user && rObj.reporterId === user.id) {
+                  showActions = true;
+                } else if (rObj.isGuestReport && localTokens[rObj.id]) {
+                  const elapsedMin = (Date.now() - new Date(rObj.createdAt).getTime()) / (1000 * 60);
+                  if (elapsedMin <= 5) {
+                    showActions = true;
+                    isGuestTokenValid = true;
+                  }
                 }
               }
-            }
 
-            const guestExpired =
-              isReport && rObj?.isGuestReport && localTokens[rObj.id] &&
-              (Date.now() - new Date(rObj.createdAt).getTime()) / (1000 * 60) > 5;
+              const guestExpired =
+                isReport && rObj?.isGuestReport && localTokens[rObj.id] &&
+                (Date.now() - new Date(rObj.createdAt).getTime()) / (1000 * 60) > 5;
 
-            return (
-              <article key={event.id} className="incident-timeline-item flex gap-3 items-start relative pl-8">
-                {/* Event Marker Dot */}
-                <div
-                  className="absolute left-2.5 top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white flex items-center justify-center text-[8px]"
-                  style={{
-                    background:
-                      event.type === "Volunteer Verified"
-                        ? "var(--green)"
-                        : event.type === "Moderator Action"
-                        ? "var(--blue)"
-                        : event.type === "Road Cleared"
-                        ? "#22c55e"
-                        : event.type === "False Report"
-                        ? "var(--red)"
-                        : "var(--amber)",
-                    marginLeft: "-1px"
-                  }}
-                />
-
-                <div className="incident-timeline-body flex-1 bg-white p-3 rounded-lg border border-teal-100 shadow-sm text-sm">
-                  <div className="incident-timeline-meta flex items-center justify-between mb-1 text-xs text-slate-500">
-                    <span className="incident-timeline-reporter font-medium flex items-center gap-1">
-                      <Users size={12} />
-                      {event.reporter}
-                    </span>
-                    <span className="incident-timeline-time flex items-center gap-1">
-                      <Clock3 size={12} />
-                      {formatRelativeTime(event.timestamp)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">
-                      {event.type}
-                    </span>
-                    {event.severity && (
-                      <span
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white"
-                        style={{ background: severityColorMeta[event.severity].color }}
-                      >
-                        {severityColorMeta[event.severity].label}
+              return (
+                <article key={event.id} className="incident-timeline-item">
+                  <span
+                    className="incident-timeline-dot"
+                    style={{
+                      background:
+                        event.type === "Volunteer Verified"
+                          ? "var(--green)"
+                          : event.type === "Moderator Action"
+                          ? "var(--blue)"
+                          : event.type === "Road Cleared"
+                          ? "#22c55e"
+                          : event.type === "False Report"
+                          ? "var(--red)"
+                          : "var(--amber)"
+                    }}
+                  />
+                  <div className="incident-timeline-body">
+                    <div className="incident-timeline-meta">
+                      <span className="incident-timeline-reporter">
+                        <Users size={12} />
+                        {event.reporter}
                       </span>
+                      <span className="incident-timeline-time">
+                        <Clock3 size={12} />
+                        {formatRelativeTime(event.timestamp)}
+                      </span>
+                    </div>
+
+                    <div className="incident-timeline-type-row">
+                      <span className="incident-timeline-type">{event.type}</span>
+                      {event.severity && (
+                        <span
+                          className="incident-timeline-severity"
+                          style={{ background: severityColorMeta[event.severity].color }}
+                        >
+                          {severityColorMeta[event.severity].label}
+                        </span>
+                      )}
+                    </div>
+
+                    {editingReportId === event.id && rObj ? (
+                      <div className="incident-report-edit-inline">
+                        <div>
+                          <label className="incident-edit-label">Edit Report Notes</label>
+                          <textarea
+                            className="incident-edit-input"
+                            rows={2}
+                            value={editNotes}
+                            onChange={(e) => setEditNotes(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="incident-edit-label">Severity</label>
+                          <select
+                            className="incident-edit-input"
+                            value={editSeverity}
+                            onChange={(e) => setEditSeverity(e.target.value as SeverityLevel)}
+                          >
+                            {Object.keys(severityColorMeta).map((key) => (
+                              <option key={key} value={key}>
+                                {severityColorMeta[key as SeverityLevel].label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="incident-edit-form-actions">
+                          <button
+                            type="button"
+                            className="incident-btn incident-btn--secondary"
+                            onClick={() => setEditingReportId(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="incident-btn incident-btn--primary"
+                            disabled={isSavingEdit}
+                            onClick={() => saveEdit(event.id)}
+                          >
+                            <Save size={13} />
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        {event.notes ? (
+                          <p className="incident-timeline-notes">{event.notes}</p>
+                        ) : (
+                          <p className="incident-timeline-notes incident-timeline-notes--empty">
+                            No notes attached
+                          </p>
+                        )}
+
+                        {event.photos && event.photos.length > 0 && (
+                          <div className="incident-timeline-photos">
+                            {event.photos.map((u, idx) => (
+                              <a
+                                key={idx}
+                                href={u}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="incident-photo-thumb"
+                              >
+                                <img src={u} alt="Attachment" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {showActions && editingReportId !== event.id && rObj && (
+                      <div className="incident-timeline-actions">
+                        {(userRole === "admin" || userRole === "moderator" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
+                          <button type="button" onClick={() => startEdit(rObj)}>
+                            <Edit size={12} /> Edit
+                          </button>
+                        )}
+                        {(userRole === "admin" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
+                          <button type="button" className="danger" onClick={() => deleteReport(rObj.id)}>
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {guestExpired && (
+                      <div className="incident-timeline-locked">
+                        This report is locked. Sign in to request changes.
+                      </div>
                     )}
                   </div>
-
-                  {/* Notes content */}
-                  {editingReportId === event.id && rObj ? (
-                    // Inline Edit Form (Feature 5 & 6)
-                    <div className="mt-2 p-2 bg-teal-50/40 border border-teal-100 rounded flex flex-col gap-2">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">
-                          Edit Report Notes:
-                        </label>
-                        <textarea
-                          className="w-full text-xs p-1.5 border border-slate-200 rounded"
-                          rows={2}
-                          value={editNotes}
-                          onChange={(e) => setEditNotes(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">
-                          Severity:
-                        </label>
-                        <select
-                          className="w-full text-xs p-1 border border-slate-200 rounded"
-                          value={editSeverity}
-                          onChange={(e) => setEditSeverity(e.target.value as SeverityLevel)}
-                        >
-                          {Object.keys(severityColorMeta).map((key) => (
-                            <option key={key} value={key}>
-                              {severityColorMeta[key as SeverityLevel].label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          type="button"
-                          className="px-2 py-1 text-xs bg-teal-100 rounded font-semibold text-teal-900"
-                          onClick={() => setEditingReportId(null)}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="px-2 py-1 text-xs bg-teal-700 text-white rounded font-semibold flex items-center gap-1"
-                          disabled={isSavingEdit}
-                          onClick={() => saveEdit(event.id)}
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      {event.notes ? (
-                        <p className="text-slate-600 leading-relaxed">{event.notes}</p>
-                      ) : (
-                        <p className="text-slate-400 italic">No notes attached</p>
-                      )}
-
-                      {/* Display Photos inside timeline item */}
-                      {event.photos && event.photos.length > 0 && (
-                        <div className="flex gap-1.5 mt-2">
-                          {event.photos.map((u, idx) => (
-                            <a
-                              key={idx}
-                              href={u}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="w-12 h-12 rounded border border-slate-100 overflow-hidden block"
-                            >
-                              <img src={u} alt="Attachment" className="w-full h-full object-cover" />
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions Drawer Panel (Features 5 & 6) */}
-                  {showActions && editingReportId !== event.id && rObj && (
-                    <div className="flex gap-2 justify-end mt-2 pt-2 border-t border-teal-100 text-xs">
-                      {(userRole === "admin" || userRole === "moderator" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
-                        <button
-                          type="button"
-                          className="text-teal-600 hover:text-teal-800 flex items-center gap-0.5"
-                          onClick={() => startEdit(rObj)}
-                        >
-                          <Edit size={12} /> Edit
-                        </button>
-                      )}
-                      {(userRole === "admin" || isGuestTokenValid || (user && rObj.reporterId === user.id)) && (
-                        <button
-                          type="button"
-                          className="text-red-600 hover:text-red-800 flex items-center gap-0.5"
-                          onClick={() => deleteReport(rObj.id)}
-                        >
-                          <Trash2 size={12} /> Delete
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Guest Expired Warning Lockout (Feature 5) */}
-                  {guestExpired && (
-                    <div className="mt-2 text-[10px] text-slate-400 italic">
-                      This report is locked. Sign in to request changes.
-                    </div>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ── Verification Section ─────────────────────────── */}
-      <div className="incident-verify-section bg-teal-50/40 p-4 rounded-lg border border-teal-100">
-        <p className="eyebrow text-xs uppercase text-slate-400 font-bold mb-3 flex items-center gap-1">
+      {/* ── Verify section ───────────────────────────────── */}
+      <div className="incident-verify-section">
+        <p className="eyebrow">
           <CheckSquare size={12} />
           Verify this incident
         </p>
 
         {!user ? (
-          <div className="incident-auth-gate text-center py-3 bg-white border border-slate-200 rounded p-4">
-            <div className="incident-auth-gate-icon mb-1">
+          <div className="incident-auth-gate">
+            <div className="incident-auth-gate-icon">
               <Lock size={20} />
             </div>
-            <p className="incident-auth-gate-title font-semibold text-slate-800">Sign in to verify</p>
-            <p className="incident-auth-gate-sub text-xs text-slate-500 mb-3">
+            <p className="incident-auth-gate-title">Sign in to verify</p>
+            <p className="incident-auth-gate-sub">
               Anyone can submit reports. Verification requires a Google account to
               prevent false data from affecting emergency response.
             </p>
             <button
               type="button"
-              className="incident-auth-gate-btn bg-teal-700 hover:bg-teal-600 text-white rounded px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 mx-auto"
+              className="incident-auth-gate-btn"
               onClick={onOpenAuth}
             >
               <LogIn size={14} />
@@ -923,48 +847,40 @@ export function IncidentDetailsDrawer({
             </button>
           </div>
         ) : voteSuccess ? (
-          <div className="incident-vote-success flex items-center gap-2 bg-green-50 border border-green-200 rounded p-3 text-green-800 text-sm">
+          <div className="incident-vote-success">
             <CheckCircle2 size={18} />
             <div>
-              <p className="incident-vote-success-title font-semibold">
-                Verification recorded
-              </p>
-              <p className="incident-vote-success-sub text-xs opacity-90">
+              <p className="incident-vote-success-title">Verification recorded</p>
+              <p className="incident-vote-success-sub">
                 Voted "{voteOptions.find((v) => v.id === lastVote)?.label}" as {user.name}
               </p>
             </div>
           </div>
         ) : (
           <>
-            <p className="incident-verify-hint text-xs text-slate-600 mb-3">
+            <p className="incident-verify-hint">
               Signed in as <strong>{user.name}</strong>
               {user.isReal ? (
-                <span className="incident-google-badge ml-1 bg-teal-100 text-teal-800 px-1 py-0.5 rounded text-[9px]">
-                  Google
-                </span>
+                <span className="incident-google-badge">Google</span>
               ) : (
-                <span className="incident-demo-badge ml-1 bg-amber-100 text-amber-800 px-1 py-0.5 rounded text-[9px]">
-                  Demo
-                </span>
+                <span className="incident-demo-badge">Demo</span>
               )}
             </p>
 
-            <div className="incident-vote-grid grid grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="incident-vote-grid">
               {voteOptions.map((opt) => (
                 <button
                   key={opt.id}
                   type="button"
-                  className="incident-vote-btn border rounded p-2 text-xs flex flex-col items-center justify-center transition hover:opacity-90"
+                  className="incident-vote-btn"
                   style={{ background: opt.bg, color: opt.text, borderColor: opt.border }}
                   disabled={isSubmitting}
                   onClick={() => handleVote(opt.id)}
                 >
-                  <span className="incident-vote-icon mb-1"><opt.icon size={16} /></span>
-                  <span className="font-semibold">{opt.label}</span>
+                  <span className="incident-vote-icon"><opt.icon size={16} /></span>
+                  <span>{opt.label}</span>
                   {voteCounts[opt.id] > 0 && (
-                    <span className="incident-vote-count mt-1 bg-white px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-200">
-                      {voteCounts[opt.id]}
-                    </span>
+                    <span className="incident-vote-count">{voteCounts[opt.id]}</span>
                   )}
                 </button>
               ))}

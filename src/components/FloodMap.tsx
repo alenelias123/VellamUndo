@@ -115,6 +115,7 @@ export function FloodMap({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <MapResizeHandler />
       <MapClickHandler
         isDrawingStretch={isDrawingStretch}
         onPickLocation={onPickLocation}
@@ -737,6 +738,24 @@ function renderBtnState(btn: HTMLButtonElement, loading: boolean, hasLocation: b
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+// Keeps the Leaflet view in sync with the container size. Leaflet only
+// listens to window resizes, so container resizes caused by layout/media-query
+// changes (breakpoint shifts, panel toggles, browser chrome on mobile) would
+// otherwise leave tiles blurry or misaligned.
+function MapResizeHandler() {
+  const map = useMap();
+  useEffect(() => {
+    const el = map.getContainer();
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize({ debounceMoveend: true });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [map]);
+  return null;
+}
 
 function MapClickHandler({
   isDrawingStretch,

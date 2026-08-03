@@ -13,7 +13,8 @@ import {
   User,
   Search,
   SlidersHorizontal,
-  X
+  X,
+  Loader2
 } from "lucide-react";
 import { ReportPanel } from "@/components/ReportPanel";
 import { SafeRoutePlanner } from "@/components/SafeRoutePlanner";
@@ -21,7 +22,8 @@ import { IncidentDetailsDrawer } from "@/components/IncidentDetailsDrawer";
 import { AuthModal } from "@/components/AuthModal";
 import { useEmergencyStore } from "@/hooks/useEmergencyStore";
 import { useAuth } from "@/hooks/useAuth";
-import { severityColorMeta, incidentTypeMeta } from "@/lib/floodReports";
+import { useIncidentSearch } from "@/hooks/useIncidentSearch";
+import { severityColorMeta, severityMeta, incidentTypeMeta, formatRelativeTime } from "@/lib/floodReports";
 import type { Coordinates, RouteOption, Incident, SeverityLevel } from "@/lib/types";
 import { fetchRoadPath, type SearchResultPlace } from "@/lib/routing";
 
@@ -110,14 +112,18 @@ export default function HomeClient() {
   const [filterStatus, setFilterStatus] = useState<string[]>([]);
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
-  const [globalSearch, setGlobalSearch] = useState("");
-  const [globalSuggestions, setGlobalSuggestions] = useState<Incident[]>([]);
+  const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
+  const globalSearchRef = useRef<HTMLDivElement>(null);
+  const incidentSearch = useIncidentSearch(incidents);
 
   // Close the filter popover when clicking outside it
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
       if (filtersRef.current && !filtersRef.current.contains(event.target as Node)) {
         setIsFiltersOpen(false);
+      }
+      if (globalSearchRef.current && !globalSearchRef.current.contains(event.target as Node)) {
+        setGlobalSearchFocused(false);
       }
     }
     document.addEventListener("mousedown", handlePointerDown);
@@ -171,23 +177,6 @@ export default function HomeClient() {
     startGpsWatch();
     setRecenterTrigger((n) => n + 1);
   }, [startGpsWatch]);
-
-  // Global search autocomplete watcher
-  useEffect(() => {
-    if (globalSearch.trim().length < 2) {
-      setGlobalSuggestions([]);
-      return;
-    }
-    const q = globalSearch.toLowerCase().trim();
-    const matches = incidents.filter(
-      (inc) =>
-        inc.roadName.toLowerCase().includes(q) ||
-        inc.district.toLowerCase().includes(q) ||
-        inc.landmark.toLowerCase().includes(q) ||
-        inc.type.toLowerCase().includes(q)
-    );
-    setGlobalSuggestions(matches.slice(0, 5));
-  }, [globalSearch, incidents]);
 
   // ── Derived state & Filtering ──────────────────────────────────────
   const selectedIncident = useMemo(
@@ -268,8 +257,9 @@ export default function HomeClient() {
   function handleSelectGlobalSuggestion(inc: Incident) {
     setSelectedIncidentId(inc.id);
     setPendingLocation(undefined);
-    setGlobalSearch("");
-    setGlobalSuggestions([]);
+    incidentSearch.setQuery("");
+    incidentSearch.clearSuggestions();
+    setGlobalSearchFocused(false);
     
     // Highlight route by setting it as routing destination and switching panel
     setRoutingDestination({
@@ -322,51 +312,109 @@ export default function HomeClient() {
             {/* Search + map filters */}
             <div className="topbar-middle">
               {/* Desktop Autocomplete Search - Hidden on Mobile */}
-              <div className="global-search-container relative hidden md:block">
+              <div
+                className="global-search-container relative hidden md:block"
+                ref={globalSearchRef}
+              >
                 <div className="header-search-wrap">
                   <Search size={16} className="header-search-icon" />
                   <input
                     type="text"
-                    placeholder="Search roads, districts, landmarks or incident types..."
+                    placeholder="Search incidents, roads, districts, landmarks..."
                     className="header-search-input"
-                    value={globalSearch}
-                    onChange={(e) => setGlobalSearch(e.target.value)}
+                    value={incidentSearch.query}
+                    onChange={(e) => incidentSearch.setQuery(e.target.value)}
+                    onFocus={() => setGlobalSearchFocused(true)}
+                    onKeyDown={(e) => {
+                      incidentSearch.handleKeyDown(e, handleSelectGlobalSuggestion);
+                      if (
+                        e.key === "Enter" &&
+                        !e.defaultPrevented &&
+                        incidentSearch.suggestions.length > 0
+                      ) {
+                        e.preventDefault();
+                        handleSelectGlobalSuggestion(incidentSearch.suggestions[0]);
+                      }
+                    }}
                   />
-                  {globalSearch && (
+                  {incidentSearch.query && (
                     <button
                       type="button"
                       className="header-search-clear"
-                      onClick={() => { setGlobalSearch(""); setGlobalSuggestions([]); }}
+                      onClick={() => {
+                        incidentSearch.setQuery("");
+                        incidentSearch.clearSuggestions();
+                      }}
                       aria-label="Clear search"
                     >
                       <X size={14} />
                     </button>
                   )}
                 </div>
-                {globalSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-[2000] text-sm overflow-hidden">
-                    {globalSuggestions.map((inc) => {
-                      const TypeIcon = incidentTypeMeta[inc.type]?.icon ?? MapPin;
-                      return (
-                        <button
-                          key={inc.id}
-                          type="button"
-                          className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 flex items-center gap-2"
-                          onClick={() => handleSelectGlobalSuggestion(inc)}
-                        >
-                          <span className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
-                            <TypeIcon size={14} />
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-slate-800 truncate">{inc.roadName}</div>
-                            <div className="text-xs text-slate-500 truncate">{inc.landmark}, {inc.district}</div>
-                          </div>
-                          <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full shrink-0">{inc.confidence}% match</span>
-                        </button>
-                      );
-                    })}
+
+                {globalSearchFocused && (incidentSearch.isLoading || incidentSearch.query.trim().length >= 2) ? (
+                  <div className="glass-search-dropdown">
+                    {incidentSearch.isLoading ? (
+                      <div className="glass-search-status">
+                        <Loader2 size={14} className="report-spin" />
+                        Searching reported incidents…
+                      </div>
+                    ) : incidentSearch.suggestions.length > 0 ? (
+                      <ul className="glass-search-list">
+                        {incidentSearch.suggestions.map((inc, idx) => {
+                          const TypeIcon = incidentTypeMeta[inc.type]?.icon ?? MapPin;
+                          const sevMeta =
+                            severityMeta[inc.severity] ?? severityMeta.WATERLOGGED;
+                          return (
+                            <li key={inc.id}>
+                              <button
+                                type="button"
+                                className={`glass-search-item ${
+                                  incidentSearch.highlightedIndex === idx ? "is-highlighted" : ""
+                                }`}
+                                onMouseEnter={() => incidentSearch.setHighlightedIndex(idx)}
+                                onClick={() => handleSelectGlobalSuggestion(inc)}
+                              >
+                                <span
+                                  className="glass-search-icon"
+                                  style={{ background: sevMeta.background, color: sevMeta.color }}
+                                >
+                                  <TypeIcon size={15} />
+                                </span>
+                                <div className="glass-search-text">
+                                  <strong>{inc.roadName}</strong>
+                                  <small>
+                                    {inc.landmark}, {inc.district}
+                                  </small>
+                                </div>
+                                <div className="glass-search-meta">
+                                  <span
+                                    className="glass-search-badge"
+                                    style={{
+                                      background: sevMeta.background,
+                                      color: sevMeta.color,
+                                      borderColor: sevMeta.border
+                                    }}
+                                  >
+                                    {sevMeta.shortLabel}
+                                  </span>
+                                  <span className="glass-search-conf">{inc.confidence}%</span>
+                                </div>
+                              </button>
+                              <div className="glass-search-foot">
+                                <span>{incidentTypeMeta[inc.type]?.label ?? inc.type}</span>
+                                <span className="glass-search-status-chip">{inc.status}</span>
+                                <span>{formatRelativeTime(inc.updatedAt)}</span>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <div className="glass-search-empty">{incidentSearch.error}</div>
+                    )}
                   </div>
-                )}
+                ) : null}
               </div>
 
               {/* Combined map filters */}
