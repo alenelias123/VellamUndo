@@ -534,22 +534,51 @@ export function useEmergencyStore() {
     },
 
     async deleteIncident(incidentId: string) {
+      const previousIncidents = state.incidents;
+
       setState((prev) => ({
         ...prev,
         incidents: prev.incidents.filter((inc) => inc.id !== incidentId)
       }));
 
-      if (navigator.onLine) {
-        try {
-          const res = await fetch(`/api/incidents/${incidentId}`, {
-            method: "DELETE"
-          });
-          if (res.ok) {
-            await fetchIncidents();
-          }
-        } catch (err) {
-          console.warn("Failed to delete incident online:", err);
+      if (!navigator.onLine) {
+        alert("You must be online to delete incidents.");
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        return;
+      }
+
+      try {
+        const sessionData = await supabase?.auth.getSession();
+        const sessionEmail = sessionData?.data.session?.user?.email;
+        const accessToken = sessionData?.data.session?.access_token;
+        const headers: Record<string, string> = {};
+        if (sessionEmail) headers["x-admin-email"] = sessionEmail;
+        if (accessToken) headers["authorization"] = `Bearer ${accessToken}`;
+
+        const res = await fetch(`/api/incidents/${incidentId}`, {
+          method: "DELETE",
+          headers: Object.keys(headers).length > 0 ? headers : undefined
+        });
+
+        if (!res.ok) {
+          let message = "Failed to delete incident";
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string") {
+              message = data.error;
+            }
+          } catch {}
+
+          setState((prev) => ({ ...prev, incidents: previousIncidents }));
+          alert(message);
+          return;
         }
+
+        await fetchIncidents();
+      } catch (err) {
+        console.warn("Failed to delete incident online:", err);
+        setState((prev) => ({ ...prev, incidents: previousIncidents }));
+        alert("Failed to delete incident");
       }
     },
 
