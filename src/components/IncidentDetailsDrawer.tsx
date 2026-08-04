@@ -144,6 +144,9 @@ export function IncidentDetailsDrawer({
   const [editSeverity, setEditSeverity] = useState<SeverityLevel>("WATERLOGGED");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
+  // Inline report delete confirmation
+  const [deleteConfirmingReportId, setDeleteConfirmingReportId] = useState<string | null>(null);
+
   // Check roles helper
   const userRole = useMemo(() => {
     if (!user) return "guest";
@@ -423,11 +426,14 @@ export function IncidentDetailsDrawer({
     }
   }
 
-  async function deleteReport(reportId: string) {
-    if (confirm("Are you sure you want to delete this report? This action is permanent.")) {
-      const token = localTokens[reportId];
-      await onDeleteReport(reportId, token);
-    }
+  function deleteReport(reportId: string) {
+    setDeleteConfirmingReportId(reportId);
+  }
+
+  async function confirmDeleteReport(reportId: string) {
+    const token = localTokens[reportId];
+    await onDeleteReport(reportId, token);
+    setDeleteConfirmingReportId(null);
   }
 
   return (
@@ -503,7 +509,8 @@ export function IncidentDetailsDrawer({
         <div className="incident-delete-confirm">
           <p className="incident-delete-confirm-title">Delete this incident?</p>
           <p className="incident-delete-confirm-sub">
-            This permanently removes “{incident.roadName}” and all of its reports.
+            This permanently removes "{incident.roadName}" and all of its reports.
+            This action cannot be undone.
           </p>
           {editError ? <p className="incident-edit-error">{editError}</p> : null}
           <div className="incident-delete-confirm-actions">
@@ -811,6 +818,31 @@ export function IncidentDetailsDrawer({
                             <Trash2 size={12} /> Delete
                           </button>
                         )}
+                      </div>
+                    )}
+
+                    {deleteConfirmingReportId === event.id && (
+                      <div className="incident-delete-confirm">
+                        <p className="incident-delete-confirm-title">Delete this report?</p>
+                        <p className="incident-delete-confirm-sub">
+                          This permanently removes the report by {event.reporter}. This action cannot be undone.
+                        </p>
+                        <div className="incident-delete-confirm-actions">
+                          <button
+                            type="button"
+                            className="incident-btn incident-btn--secondary"
+                            onClick={() => setDeleteConfirmingReportId(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="incident-btn incident-btn--danger"
+                            onClick={() => void confirmDeleteReport(event.id)}
+                          >
+                            Delete permanently
+                          </button>
+                        </div>
                       </div>
                     )}
 

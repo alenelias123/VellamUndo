@@ -135,11 +135,11 @@ export function getDistrictBySlug(slug: string): District {
   return districts.find((district) => district.slug === slug) ?? districts[6];
 }
 
-export function findDistrictForCoordinates(lat: number, lng: number): District {
+export function findDistrictForCoordinates(lat: number, lng: number): District | null {
   return (
     districts.find((district) => {
       const [[south, west], [north, east]] = district.bounds;
       return lat >= south && lat <= north && lng >= west && lng <= east;
-    }) ?? getDistrictBySlug(defaultDistrictSlug)
+    }) ?? null
   );
 }

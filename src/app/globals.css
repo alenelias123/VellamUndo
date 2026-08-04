@@ -1275,6 +1275,17 @@ label {
     will-change: top;
   }
 
+  /* Collapsed: the whole sheet is a reveal surface — gestures must never
+     scroll the panel content natively, they raise the sheet instead. */
+  .operations-panel--collapsed {
+    touch-action: none;
+  }
+
+  /* Half/full screen: let the panel content scroll normally. */
+  .operations-panel:not(.operations-panel--collapsed) {
+    touch-action: pan-y;
+  }
+
   .operations-panel-drag-zone {
     position: sticky;
     top: 0;
@@ -3093,6 +3104,57 @@ label {
   border-top: 1px solid #fecaca;
   border-bottom: 1px solid #fecaca;
   color: #991b1b;
+}
+
+/* Worst-case flood route warning popup */
+.route-warning-modal {
+  width: min(420px, 100%);
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #fecaca;
+  padding: 22px 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.route-warning-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.route-warning-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #fef2f2;
+  color: #dc2626;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.route-warning-modal-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #991b1b;
+}
+
+.route-warning-modal-sub {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #7f1d1d;
+  line-height: 1.5;
+}
+
+.route-warning-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 /* Results section */

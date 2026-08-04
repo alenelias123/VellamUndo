@@ -1,4 +1,24 @@
 import { NextResponse } from "next/server";
+import { districts } from "@/lib/districts";
+
+const KERALA_DISTRICT_SLUGS = districts.map((district) => district.slug);
+
+const DISTRICT_ALIASES: Record<string, string> = {
+  trivandrum: "thiruvananthapuram",
+  cochin: "ernakulam",
+  calicut: "kozhikode",
+  quilon: "kollam",
+  palghat: "palakkad",
+};
+
+function toSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-(county|district|province)$/, "")
+    .replace(/^-+|-+$/g, "");
+}
 
 export async function GET(request: Request) {
   try {
@@ -41,18 +61,39 @@ export async function GET(request: Request) {
       address.amenity ||
       address.shop ||
       address.county ||
-      "Kerala";
+      address.state ||
+      address.country ||
+      "Unknown area";
 
-    // Attempt to match district slug
-    const stateDistrict = address.state_district || address.county || address.city || "";
-    let districtSlug = "ernakulam"; // default fallback
+    // ── District resolution (Kerala districts AND anywhere else) ───────────
+    const stateSlug = toSlug(address.state || "");
+    const isKerala = stateSlug.includes("kerala");
 
-    const lowerDistrict = stateDistrict.toLowerCase();
-    const matchedSlug = ["ernakulam", "alappuzha", "kottayam", "thrissur", "kozhikode", "wayanad", "idukki", "pathanamthitta", "kollam", "thiruvananthapuram", "palakkad", "malappuram", "kannur", "kasaragod"].find(
-      (slug) => lowerDistrict.includes(slug)
-    );
-    if (matchedSlug) {
-      districtSlug = matchedSlug;
+    const districtCandidate =
+      address.state_district ||
+      address.county ||
+      address.district ||
+      address.municipality ||
+      address.city ||
+      address.town ||
+      address.village ||
+      address.region ||
+      address.state ||
+      address.country ||
+      "";
+
+    const candidateSlug = toSlug(districtCandidate);
+    const keralaMatch =
+      KERALA_DISTRICT_SLUGS.find((slug) => candidateSlug.includes(slug)) ||
+      DISTRICT_ALIASES[candidateSlug];
+
+    let districtSlug: string;
+    if (keralaMatch) {
+      districtSlug = keralaMatch;
+    } else if (isKerala) {
+      districtSlug = candidateSlug || stateSlug || "kerala";
+    } else {
+      districtSlug = candidateSlug || stateSlug || toSlug(address.country || "") || "unknown";
     }
 
     return NextResponse.json({

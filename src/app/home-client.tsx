@@ -58,8 +58,7 @@ export default function HomeClient() {
     editIncident,
     deleteIncident,
     editReport,
-    deleteReport,
-    resetDemoData
+    deleteReport
   } = useEmergencyStore();
 
   const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
@@ -122,7 +121,9 @@ export default function HomeClient() {
   // full screen. Pulling down steps it back down one level at a time. The
   // gesture only drives the sheet while it sits collapsed at the bottom (or
   // from the drag handle when expanded), so once the panel is at half/full
-  // screen its own content keeps scrolling normally.
+  // screen its own content keeps scrolling normally. Pointer events cover
+  // both touch (mobile) and mouse (desktop preview); touch-action on the
+  // collapsed sheet is "none" so the gesture never scrolls content natively.
   useEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
@@ -134,7 +135,7 @@ export default function HomeClient() {
     let startY = 0;
     let startTop = 0;
     let startMode: "collapsed" | "mid" | "expanded" = "collapsed";
-    let active = false;
+    let activePointerId: number | null = null;
     let moved = false;
     let snapTimer: number | undefined;
 
@@ -157,36 +158,49 @@ export default function HomeClient() {
       return "collapsed";
     };
 
-    const onTouchStart = (e: TouchEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
       const ws = getWorkspace();
       if (!ws) return;
-      // Collapsed: the whole sheet is the "reveal" surface, so any scroll
+      // Never hijack taps on interactive controls. Capturing the pointer here
+      // would retarget pointerup to the panel and swallow the button's click.
+      const target = e.target as Element | null;
+      if (
+        target &&
+        target.closest(
+          'button, input, select, textarea, a, label, [role="button"], [contenteditable="true"]'
+        )
+      ) {
+        return;
+      }
+      // Collapsed: the whole sheet is the "reveal" surface, so any gesture
       // inside it raises the report to fill the page. At half/full screen the
       // panel content scrolls normally and only the drag handle drives it.
       if (readMode() !== "collapsed") {
         if (panel.scrollTop > 0) return;
-        const target = e.target as HTMLElement | null;
         if (!target?.closest(".operations-panel-drag-zone")) return;
       }
       if (snapTimer !== undefined) {
         window.clearTimeout(snapTimer);
         snapTimer = undefined;
       }
-      active = true;
+      activePointerId = e.pointerId;
       moved = false;
       startMode = readMode();
-      startY = e.touches[0].clientY;
+      startY = e.clientY;
       startTop = panel.getBoundingClientRect().top - ws.getBoundingClientRect().top;
+      try {
+        panel.setPointerCapture(e.pointerId);
+      } catch {}
     };
 
-    const onTouchMove = (e: TouchEvent) => {
-      if (!active) return;
-      const deltaY = e.touches[0].clientY - startY;
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerId !== activePointerId) return;
+      const deltaY = e.clientY - startY;
       if (!moved) {
         if (Math.abs(deltaY) < 8) return;
         moved = true;
       }
-      if (e.cancelable) e.preventDefault();
       const ws = getWorkspace();
       if (!ws) return;
       ws.style.setProperty("--sheet-top", `${clampTop(startTop + deltaY)}px`);
@@ -194,7 +208,7 @@ export default function HomeClient() {
     };
 
     const finishDrag = (currentY: number) => {
-      if (!active) return;
+      if (activePointerId === null) return;
       const ws = getWorkspace();
       if (ws) {
         ws.classList.remove("workspace--dragging");
@@ -228,31 +242,36 @@ export default function HomeClient() {
           ws.style.removeProperty("--sheet-top");
         }
       }
-      active = false;
+      activePointerId = null;
       moved = false;
     };
 
-    const onTouchEnd = (e: TouchEvent) => finishDrag(e.changedTouches[0].clientY);
-    const onTouchCancel = () => {
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerId !== activePointerId) return;
+      finishDrag(e.clientY);
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      if (e.pointerId !== activePointerId) return;
       const ws = getWorkspace();
       if (ws) {
         ws.classList.remove("workspace--dragging");
         ws.style.removeProperty("--sheet-top");
       }
-      active = false;
+      activePointerId = null;
       moved = false;
     };
 
-    panel.addEventListener("touchstart", onTouchStart, { passive: true });
-    panel.addEventListener("touchmove", onTouchMove, { passive: false });
-    panel.addEventListener("touchend", onTouchEnd, { passive: true });
-    panel.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    panel.addEventListener("pointerdown", onPointerDown);
+    panel.addEventListener("pointermove", onPointerMove);
+    panel.addEventListener("pointerup", onPointerUp);
+    panel.addEventListener("pointercancel", onPointerCancel);
     return () => {
       if (snapTimer !== undefined) window.clearTimeout(snapTimer);
-      panel.removeEventListener("touchstart", onTouchStart);
-      panel.removeEventListener("touchmove", onTouchMove);
-      panel.removeEventListener("touchend", onTouchEnd);
-      panel.removeEventListener("touchcancel", onTouchCancel);
+      panel.removeEventListener("pointerdown", onPointerDown);
+      panel.removeEventListener("pointermove", onPointerMove);
+      panel.removeEventListener("pointerup", onPointerUp);
+      panel.removeEventListener("pointercancel", onPointerCancel);
     };
   }, []);
 
@@ -837,7 +856,7 @@ export default function HomeClient() {
         </button>
 
         {/* ── Operations panel ──────────────────────────── */}
-        <aside className="operations-panel" ref={panelRef}>
+        <aside className={`operations-panel${panelMode === "collapsed" ? " operations-panel--collapsed" : ""}`} ref={panelRef}>
           <div className="operations-panel-drag-zone" aria-hidden="true">
             <span className="operations-panel-drag-pill" />
           </div>
@@ -868,7 +887,6 @@ export default function HomeClient() {
                   pendingLocation={pendingLocation}
                   onPickLocation={handlePickLocation}
                   onSubmit={addReport}
-                  onResetDemoData={resetDemoData}
                   onBack={() => {
                     setPendingLocation(undefined);
                     setIsDrawingStretch(false);

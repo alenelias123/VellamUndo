@@ -9,7 +9,6 @@ import {
   Loader2,
   LocateFixed,
   MapPin,
-  RotateCcw,
   Search,
   Send,
   X
@@ -53,7 +52,6 @@ type ReportPanelProps = {
   pendingLocation?: Coordinates;
   onPickLocation: (coords: Coordinates) => void;
   onSubmit: (input: OfflineReportPayload) => Promise<boolean>;
-  onResetDemoData: () => void;
   onBack?: () => void;
   isDrawingStretch?: boolean;
   stretchStart?: Coordinates;
@@ -77,7 +75,6 @@ export function ReportPanel({
   pendingLocation,
   onPickLocation,
   onSubmit,
-  onResetDemoData,
   onBack,
   isDrawingStretch = false,
   stretchStart,
@@ -179,7 +176,7 @@ export function ReportPanel({
         if (!isUnnamed) {
           setRoadName(rawRoad);
           setLandmark(geocodeData.landmark || "Kerala");
-          setDistrict(geocodeData.district || "ernakulam");
+          setDistrict(geocodeData.district || "");
           setLocationConfidence(100);
           setOriginalCoords(pendingLocation!);
           setSnappedCoords(null);
@@ -219,7 +216,7 @@ export function ReportPanel({
           const resolvedName = osmHighwayName || "Unknown Road";
           setRoadName(resolvedName);
           setLandmark(geocodeData?.landmark || "Kerala");
-          setDistrict(geocodeData?.district || "ernakulam");
+          setDistrict(geocodeData?.district || "");
           setLocationConfidence(20);
           setOriginalCoords(pendingLocation!);
           setSnappedCoords(null);
@@ -260,7 +257,7 @@ export function ReportPanel({
 
           setRoadName(snappedName);
           setLandmark(snappedGeocode?.landmark || geocodeData?.landmark || "Kerala");
-          setDistrict(snappedGeocode?.district || geocodeData?.district || "ernakulam");
+          setDistrict(snappedGeocode?.district || geocodeData?.district || "");
 
           setSnapBanner({
             roadName: snappedName,
@@ -277,7 +274,7 @@ export function ReportPanel({
 
           setRoadName(rawRoad || "Unnamed road");
           setLandmark(geocodeData?.landmark || "Kerala");
-          setDistrict(geocodeData?.district || "ernakulam");
+          setDistrict(geocodeData?.district || "");
           setLocationConfidence(50);
         }
 
@@ -285,7 +282,7 @@ export function ReportPanel({
         console.warn("Snapping pipeline failed:", err);
         setRoadName(geocodeData?.roadName || "Unknown Road");
         setLandmark(geocodeData?.landmark || "Kerala");
-        setDistrict(geocodeData?.district || "ernakulam");
+        setDistrict(geocodeData?.district || "");
         setLocationConfidence(20);
       } finally {
         setIsGeocoding(false);
@@ -445,14 +442,6 @@ export function ReportPanel({
                 <ArrowLeft size={16} />
               </button>
             )}
-            <button
-              className="icon-button"
-              type="button"
-              onClick={onResetDemoData}
-              title="Reset demo data"
-            >
-              <RotateCcw size={16} />
-            </button>
           </div>
         </div>
 
@@ -523,7 +512,7 @@ export function ReportPanel({
                       const sgData = await sgRes.json();
                       setRoadName(tempRoad);
                       setLandmark(sgData.landmark || "Kerala");
-                      setDistrict(sgData.district || "ernakulam");
+                      setDistrict(sgData.district || "");
                     }
                   } catch {}
                   
@@ -765,7 +754,7 @@ export function ReportPanel({
             </select>
           </label>
 
-          {/* ── Road / Landmark ────────────────────────────── */}
+          {/* ── Road / Landmark / District ────────────────── */}
           <label>
             Road
             <input
@@ -784,6 +773,15 @@ export function ReportPanel({
               value={landmark}
               onChange={(e) => setLandmark(e.target.value)}
               placeholder="e.g. Near signal junction"
+            />
+          </label>
+
+          <label className="span-2">
+            District
+            <input
+              value={district}
+              onChange={(e) => setDistrict(e.target.value)}
+              placeholder="e.g. Ernakulam"
             />
           </label>
 

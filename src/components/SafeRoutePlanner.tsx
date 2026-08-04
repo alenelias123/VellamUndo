@@ -76,6 +76,9 @@ export function SafeRoutePlanner({
   const [openNavMenuId, setOpenNavMenuId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Worst-case warning: every passable route crosses a flood-affected road.
+  const [floodOnlyWarningDismissed, setFloodOnlyWarningDismissed] = useState(false);
+
   // ── Origin typeahead ──────────────────────────────────────────────
   const [customOrigin, setCustomOrigin] = useState<Coordinates | null>(null);
   const [activeSearchField, setActiveSearchField] = useState<"origin" | "destination" | null>(null);
@@ -132,6 +135,7 @@ export function SafeRoutePlanner({
         onRouteChange(undefined);
       } else if (destination.id !== selectedDestination?.id) {
         setSelectedDestination(destination);
+        setFloodOnlyWarningDismissed(false);
         dest.setQuery(destination.name);
         if (!origin) return;
         setIsCalculating(true);
@@ -175,6 +179,7 @@ export function SafeRoutePlanner({
     }
     setRouteInputError("");
     setSelectedDestination(place);
+    setFloodOnlyWarningDismissed(false);
     dest.setQuery(place.name);
     dest.clearSuggestions();
     onDestinationSelect(place);
@@ -198,6 +203,7 @@ export function SafeRoutePlanner({
     dest.setQuery("");
     dest.clearSuggestions();
     setSelectedDestination(null);
+    setFloodOnlyWarningDismissed(false);
     onDestinationSelect(null);
     onRouteChange(undefined);
     setRoutes([]);
@@ -394,6 +400,20 @@ export function SafeRoutePlanner({
       primaryRoute.analysis?.floodRisk === "EXTREME"
     : false;
 
+  const available = useMemo(
+    () =>
+      routes.filter(
+        (r) => (r.analysis?.routeHealth ?? 100) > 0 && r.analysis?.floodRisk !== "EXTREME"
+      ),
+    [routes]
+  );
+
+  // Worst case: at least one passable route exists, but every one of them
+  // passes through a flood-affected road, so there is no flood-free way.
+  const hasOnlyFloodedRoutes =
+    available.length > 0 &&
+    available.every((r) => (r.analysis?.floodRisk ?? "LOW") !== "LOW");
+
   // ── Route card renderer ───────────────────────────────────────────
   function renderRouteCard(
     option: RouteOption,
@@ -565,7 +585,8 @@ export function SafeRoutePlanner({
 
   // ── Render ────────────────────────────────────────────────────────
   return (
-    <section className="route-planner-panel" aria-label="Safe Route Navigation">
+    <>
+      <section className="route-planner-panel" aria-label="Safe Route Navigation">
 
       {/* ── Header ──────────────────────────────────────── */}
       <div className="route-planner-header">
@@ -820,9 +841,6 @@ export function SafeRoutePlanner({
             <p>Search a destination above to compute flood-safe driving routes.</p>
           </div>
         ) : (() => {
-          const available = routes.filter(
-            (r) => (r.analysis?.routeHealth ?? 100) > 0 && r.analysis?.floodRisk !== "EXTREME"
-          );
           const blocked = routes.filter(
             (r) => (r.analysis?.routeHealth ?? 100) === 0 || r.analysis?.floodRisk === "EXTREME"
           );
@@ -948,5 +966,40 @@ export function SafeRoutePlanner({
         })()}
       </div>
     </section>
+
+      {/* ── Worst-case warning popup ────────────────────── */}
+      {hasOnlyFloodedRoutes && !floodOnlyWarningDismissed ? (
+        <div className="modal-backdrop" onClick={() => setFloodOnlyWarningDismissed(true)}>
+          <div
+            className="route-warning-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Flood route warning"
+          >
+            <div className="route-warning-modal-header">
+              <span className="route-warning-icon">
+                <AlertTriangle size={20} />
+              </span>
+              <h3 className="route-warning-modal-title">Only route crosses a flooded road</h3>
+            </div>
+            <p className="route-warning-modal-sub">
+              Every available route to "{selectedDestination?.name}" passes through a
+              flood-affected road. There is no flood-free alternative — proceed with extreme
+              caution, or consider postponing travel.
+            </p>
+            <div className="route-warning-modal-actions">
+              <button
+                type="button"
+                className="incident-btn incident-btn--danger"
+                onClick={() => setFloodOnlyWarningDismissed(true)}
+              >
+                I understand
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { LifeBuoy, Send } from "lucide-react";
 import { findDistrictForCoordinates, getDistrictBySlug } from "@/lib/districts";
 import { helpTypeMeta, priorityMeta, type NewHelpRequestInput } from "@/lib/helpRequests";
@@ -37,14 +37,40 @@ export function HelpRequestPanel({
     [submitLocation.lat, submitLocation.lng]
   );
 
+  // For a picked location, resolve the real district via reverse geocoding so
+  // it stays correct even outside Kerala.
+  const [geocodedDistrict, setGeocodedDistrict] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingLocation) {
+      setGeocodedDistrict(null);
+      return;
+    }
+    let cancelled = false;
+    setGeocodedDistrict(null);
+    fetch(`/api/geocode?lat=${pendingLocation.lat}&lng=${pendingLocation.lng}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.district) setGeocodedDistrict(data.district);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingLocation]);
+
+  const resolvedDistrict =
+    pendingLocation
+      ? geocodedDistrict ?? inferredDistrict?.slug ?? ""
+      : inferredDistrict?.slug ?? activeDistrict.slug;
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     onSubmit({
       requesterName: requesterName.trim() || "Anonymous requester",
       contact: contact.trim() || "Control room",
-      district: inferredDistrict.slug,
-      locationName: locationName.trim() || inferredDistrict.name,
+      district: resolvedDistrict,
+      locationName: locationName.trim() || (inferredDistrict?.name ?? resolvedDistrict),
       coordinates: submitLocation,
       type,
       priority,
