@@ -146,6 +146,8 @@ export default function HomeClient() {
     };
 
     const onTouchStart = (e: TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest(".operations-panel-drag-zone")) return;
       if (panel.scrollTop > 0) return;
       const ws = getWorkspace();
       if (!ws) return;
@@ -802,6 +804,9 @@ export default function HomeClient() {
 
         {/* ── Operations panel ──────────────────────────── */}
         <aside className="operations-panel" ref={panelRef}>
+          <div className="operations-panel-drag-zone" aria-hidden="true">
+            <span className="operations-panel-drag-pill" />
+          </div>
           {selectedIncidentId && selectedIncident ? (
             <IncidentDetailsDrawer
               incident={selectedIncident}
