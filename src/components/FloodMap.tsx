@@ -796,7 +796,12 @@ function MapViewController({
   const map = useMap();
   useEffect(() => {
     if (hasActiveRoute) return;
-    map.flyTo([center.lat, center.lng], center.zoom ?? map.getZoom(), { duration: 0.6 });
+    const target = L.latLng(center.lat, center.lng);
+    // When no explicit zoom is requested (e.g. a point the user just tapped,
+    // dragged, or snapped to), the target is already on screen — flying to it
+    // only triggers an unnecessary zoom-out animation, so keep the view.
+    if (center.zoom === undefined && map.getBounds().contains(target)) return;
+    map.flyTo(target, center.zoom ?? map.getZoom(), { duration: 0.6 });
   }, [center.lat, center.lng, center.zoom, hasActiveRoute, map]);
   return null;
 }
