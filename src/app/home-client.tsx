@@ -169,7 +169,7 @@ export default function HomeClient() {
       if (e.cancelable) e.preventDefault();
       const ws = getWorkspace();
       if (!ws) return;
-      ws.style.setProperty("--sheet-top", `${clampTop(startTop - deltaY)}px`);
+      ws.style.setProperty("--sheet-top", `${clampTop(startTop + deltaY)}px`);
       ws.classList.add("workspace--dragging");
     };
 
@@ -180,7 +180,7 @@ export default function HomeClient() {
         ws.classList.remove("workspace--dragging");
         if (moved) {
           const { min, max } = getRange();
-          const currentTop = clampTop(startTop - (currentY - startY));
+          const currentTop = clampTop(startTop + (currentY - startY));
           setPanelExpanded(currentTop <= (min + max) / 2);
           const target = currentTop <= (min + max) / 2 ? min : max;
           ws.style.setProperty("--sheet-top", `${target}px`);
