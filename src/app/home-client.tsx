@@ -67,7 +67,7 @@ export default function HomeClient() {
   const router = useRouter();
 
   const [activePanel, setActivePanel] = useState<ActivePanel>("route");
-  const [panelExpanded, setPanelExpanded] = useState(false);
+  const [panelMode, setPanelMode] = useState<"collapsed" | "mid" | "expanded">("collapsed");
   const panelRef = useRef<HTMLElement | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
@@ -179,11 +179,28 @@ export default function HomeClient() {
       if (ws) {
         ws.classList.remove("workspace--dragging");
         if (moved) {
+<<<<<<< Updated upstream
           const { min, max } = getRange();
           const currentTop = clampTop(startTop + (currentY - startY));
           setPanelExpanded(currentTop <= (min + max) / 2);
           const target = currentTop <= (min + max) / 2 ? min : max;
           ws.style.setProperty("--sheet-top", `${target}px`);
+=======
+          const { max } = getRange();
+          const wsH = ws.getBoundingClientRect().height;
+          const mid = wsH * 0.5;
+          const currentTop = clampTop(startTop + (currentY - startY));
+          // Lock at the half-way mark while dragged up to half the screen;
+          // pull to full screen only when dragged past half-way.
+          let target: "collapsed" | "mid" | "expanded";
+          if (currentTop >= (max + mid) / 2) target = "collapsed";
+          else if (currentTop >= mid) target = "mid";
+          else target = "expanded";
+          setPanelMode(target);
+          const targetTop =
+            target === "expanded" ? "4px" : target === "mid" ? "50%" : `${max}px`;
+          ws.style.setProperty("--sheet-top", targetTop);
+>>>>>>> Stashed changes
           snapTimer = window.setTimeout(() => {
             ws.style.removeProperty("--sheet-top");
             snapTimer = undefined;
@@ -314,9 +331,9 @@ export default function HomeClient() {
     setSelectedIncidentId(undefined);
     setPendingLocation(undefined);
     setRoutingDestination(null);
-    setPanelExpanded(false);
     setSearchResults([]);
     setSearchQuery("");
+    setPanelMode("collapsed");
   }, [router]);
 
   // ── Derived state & Filtering ──────────────────────────────────────
@@ -398,7 +415,7 @@ export default function HomeClient() {
     if (route) {
       setSelectedIncidentId(undefined);
       // On mobile, minimize the bottom sheet so the map (with the route) is visible.
-      setPanelExpanded(false);
+      setPanelMode("collapsed");
     }
   }
 
@@ -428,7 +445,7 @@ export default function HomeClient() {
     setSelectedIncidentId(undefined);
     setPendingLocation(undefined);
     setActivePanel("search");
-    setPanelExpanded(true);
+    setPanelMode("expanded");
     incidentSearch.clearSuggestions();
     setGlobalSearchFocused(false);
   }
@@ -722,7 +739,7 @@ export default function HomeClient() {
         </header>
 
       {/* ── Workspace ─────────────────────────────────── */}
-      <main className={`workspace${panelExpanded ? " workspace--panel-expanded" : ""}`}>
+      <main className={`workspace${panelMode !== "collapsed" ? ` workspace--panel-${panelMode}` : ""}`}>
         <section className="map-stage" aria-label="Flood response map">
           {geoError && (
             <div className="absolute top-[88px] left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg z-[2000] text-xs font-semibold flex items-center gap-2 max-w-sm w-full mx-4 animate-slideDown">
@@ -778,12 +795,12 @@ export default function HomeClient() {
         <button
           type="button"
           className="operations-panel-toggle"
-          onClick={() => setPanelExpanded((v) => !v)}
-          aria-expanded={panelExpanded}
-          aria-label={panelExpanded ? "Minimize panel" : "Expand panel"}
-          title={panelExpanded ? "Minimize panel" : "Expand panel"}
+          onClick={() => setPanelMode((m) => (m === "expanded" ? "collapsed" : "expanded"))}
+          aria-expanded={panelMode !== "collapsed"}
+          aria-label={panelMode === "expanded" ? "Minimize panel" : "Expand panel"}
+          title={panelMode === "expanded" ? "Minimize panel" : "Expand panel"}
         >
-          <ChevronUp size={18} className={`ops-toggle-icon${panelExpanded ? " ops-toggle-icon--up" : ""}`} />
+          <ChevronUp size={18} className={`ops-toggle-icon${panelMode !== "collapsed" ? " ops-toggle-icon--up" : ""}`} />
         </button>
 
         {/* ── Operations panel ──────────────────────────── */}
