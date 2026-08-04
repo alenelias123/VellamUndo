@@ -116,9 +116,13 @@ export default function HomeClient() {
     return () => clearTimeout(timeout);
   }, [stretchStart, stretchEnd]);
 
-  // Mobile: drag the bottom sheet up/down to expand/collapse it in a flow.
-  // Drag only engages while the sheet is scrolled to the top so the panel's
-  // own content (route results etc.) still scrolls normally once expanded.
+  // Mobile: scrolling the report (or any panel content) up raises the bottom
+  // sheet so it fills the page. The sheet follows the gesture up to the 50%
+  // mark of the screen and locks there; pushing it past half-way snaps it to
+  // full screen. Pulling down steps it back down one level at a time. The
+  // gesture only drives the sheet while it sits collapsed at the bottom (or
+  // from the drag handle when expanded), so once the panel is at half/full
+  // screen its own content keeps scrolling normally.
   useEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
@@ -129,6 +133,7 @@ export default function HomeClient() {
 
     let startY = 0;
     let startTop = 0;
+    let startMode: "collapsed" | "mid" | "expanded" = "collapsed";
     let active = false;
     let moved = false;
     let snapTimer: number | undefined;
@@ -144,19 +149,32 @@ export default function HomeClient() {
       const { min, max } = getRange();
       return Math.min(max, Math.max(min, top));
     };
+    const readMode = (): "collapsed" | "mid" | "expanded" => {
+      const ws = getWorkspace();
+      if (!ws) return "collapsed";
+      if (ws.classList.contains("workspace--panel-expanded")) return "expanded";
+      if (ws.classList.contains("workspace--panel-mid")) return "mid";
+      return "collapsed";
+    };
 
     const onTouchStart = (e: TouchEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target?.closest(".operations-panel-drag-zone")) return;
-      if (panel.scrollTop > 0) return;
       const ws = getWorkspace();
       if (!ws) return;
+      // Collapsed: the whole sheet is the "reveal" surface, so any scroll
+      // inside it raises the report to fill the page. At half/full screen the
+      // panel content scrolls normally and only the drag handle drives it.
+      if (readMode() !== "collapsed") {
+        if (panel.scrollTop > 0) return;
+        const target = e.target as HTMLElement | null;
+        if (!target?.closest(".operations-panel-drag-zone")) return;
+      }
       if (snapTimer !== undefined) {
         window.clearTimeout(snapTimer);
         snapTimer = undefined;
       }
       active = true;
       moved = false;
+      startMode = readMode();
       startY = e.touches[0].clientY;
       startTop = panel.getBoundingClientRect().top - ws.getBoundingClientRect().top;
     };
@@ -186,16 +204,18 @@ export default function HomeClient() {
           const mid = wsH * 0.5;
           const netDelta = currentY - startY;
           const currentTop = clampTop(startTop + netDelta);
-          // Scrolling up locks the sheet at the half-way mark; pulling it
-          // past half-way expands to full screen. Scrolling down collapses.
+          // Scrolling up locks the sheet at the half-way mark (50% of screen);
+          // pushed past half-way it snaps to full screen. Scrolling down steps
+          // the sheet back down one level (full -> 50% -> collapsed).
           let target: "collapsed" | "mid" | "expanded";
           if (netDelta > 0) {
-            target = "collapsed";
+            target = startMode === "expanded" ? "mid" : "collapsed";
           } else if (currentTop >= mid) {
             target = "mid";
           } else {
             target = "expanded";
           }
+          if (target === "collapsed") panel.scrollTop = 0;
           setPanelMode(target);
           const targetTop =
             target === "expanded" ? "4px" : target === "mid" ? "50%" : `${max}px`;
@@ -203,7 +223,7 @@ export default function HomeClient() {
           snapTimer = window.setTimeout(() => {
             ws.style.removeProperty("--sheet-top");
             snapTimer = undefined;
-          }, 380);
+          }, 460);
         } else {
           ws.style.removeProperty("--sheet-top");
         }
@@ -323,6 +343,19 @@ export default function HomeClient() {
     setRecenterTrigger((n) => n + 1);
   }, [startGpsWatch]);
 
+  // Collapse the mobile bottom sheet and reset its scroll position so the
+  // next scroll gesture is free to reveal it again from the top.
+  const collapsePanel = useCallback(() => {
+    setPanelMode("collapsed");
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+  }, []);
+
+  // Toggle between collapsed and full screen from the expand/collapse pill.
+  const handleTogglePanel = useCallback(() => {
+    setPanelMode((m) => (m === "collapsed" ? "expanded" : "collapsed"));
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+  }, []);
+
   // Tapping the brand/title opens the main route-planner page.
   const handleBrandClick = useCallback(() => {
     router.push("/");
@@ -332,8 +365,8 @@ export default function HomeClient() {
     setRoutingDestination(null);
     setSearchResults([]);
     setSearchQuery("");
-    setPanelMode("collapsed");
-  }, [router]);
+    collapsePanel();
+  }, [router, collapsePanel]);
 
   // ── Derived state & Filtering ──────────────────────────────────────
   const selectedIncident = useMemo(
@@ -414,7 +447,7 @@ export default function HomeClient() {
     if (route) {
       setSelectedIncidentId(undefined);
       // On mobile, minimize the bottom sheet so the map (with the route) is visible.
-      setPanelMode("collapsed");
+      collapsePanel();
     }
   }
 
@@ -795,7 +828,7 @@ export default function HomeClient() {
         <button
           type="button"
           className="operations-panel-toggle"
-          onClick={() => setPanelMode((m) => (m === "expanded" ? "collapsed" : "expanded"))}
+          onClick={handleTogglePanel}
           aria-expanded={panelMode !== "collapsed"}
           aria-label={panelMode === "expanded" ? "Minimize panel" : "Expand panel"}
           title={panelMode === "expanded" ? "Minimize panel" : "Expand panel"}
