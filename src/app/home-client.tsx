@@ -68,6 +68,7 @@ export default function HomeClient() {
 
   const [activePanel, setActivePanel] = useState<ActivePanel>("route");
   const [panelExpanded, setPanelExpanded] = useState(false);
+  const panelRef = useRef<HTMLElement | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [pendingLocation, setPendingLocation] = useState<Coordinates | undefined>();
   const [activeRoute, setActiveRoute] = useState<RouteOption | undefined>();
@@ -114,6 +115,110 @@ export default function HomeClient() {
     }, 350);
     return () => clearTimeout(timeout);
   }, [stretchStart, stretchEnd]);
+
+  // Mobile: drag the bottom sheet up/down to expand/collapse it in a flow.
+  // Drag only engages while the sheet is scrolled to the top so the panel's
+  // own content (route results etc.) still scrolls normally once expanded.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const SHEET_BOTTOM = 12;
+    const EXPANDED_TOP = 4;
+    const collapsedHeight = () => Math.min(220, Math.max(100, window.innerHeight * 0.2));
+
+    let startY = 0;
+    let startTop = 0;
+    let active = false;
+    let moved = false;
+    let snapTimer: number | undefined;
+
+    const getWorkspace = () => panel.closest<HTMLElement>(".workspace");
+    const getRange = () => {
+      const ws = getWorkspace();
+      if (!ws) return { min: EXPANDED_TOP, max: EXPANDED_TOP };
+      const h = ws.getBoundingClientRect().height;
+      return { min: EXPANDED_TOP, max: h - collapsedHeight() - SHEET_BOTTOM };
+    };
+    const clampTop = (top: number) => {
+      const { min, max } = getRange();
+      return Math.min(max, Math.max(min, top));
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (panel.scrollTop > 0) return;
+      const ws = getWorkspace();
+      if (!ws) return;
+      if (snapTimer !== undefined) {
+        window.clearTimeout(snapTimer);
+        snapTimer = undefined;
+      }
+      active = true;
+      moved = false;
+      startY = e.touches[0].clientY;
+      startTop = panel.getBoundingClientRect().top - ws.getBoundingClientRect().top;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!active) return;
+      const deltaY = e.touches[0].clientY - startY;
+      if (!moved) {
+        if (Math.abs(deltaY) < 8) return;
+        moved = true;
+      }
+      if (e.cancelable) e.preventDefault();
+      const ws = getWorkspace();
+      if (!ws) return;
+      ws.style.setProperty("--sheet-top", `${clampTop(startTop - deltaY)}px`);
+      ws.classList.add("workspace--dragging");
+    };
+
+    const finishDrag = (currentY: number) => {
+      if (!active) return;
+      const ws = getWorkspace();
+      if (ws) {
+        ws.classList.remove("workspace--dragging");
+        if (moved) {
+          const { min, max } = getRange();
+          const currentTop = clampTop(startTop - (currentY - startY));
+          setPanelExpanded(currentTop <= (min + max) / 2);
+          const target = currentTop <= (min + max) / 2 ? min : max;
+          ws.style.setProperty("--sheet-top", `${target}px`);
+          snapTimer = window.setTimeout(() => {
+            ws.style.removeProperty("--sheet-top");
+            snapTimer = undefined;
+          }, 380);
+        } else {
+          ws.style.removeProperty("--sheet-top");
+        }
+      }
+      active = false;
+      moved = false;
+    };
+
+    const onTouchEnd = (e: TouchEvent) => finishDrag(e.changedTouches[0].clientY);
+    const onTouchCancel = () => {
+      const ws = getWorkspace();
+      if (ws) {
+        ws.classList.remove("workspace--dragging");
+        ws.style.removeProperty("--sheet-top");
+      }
+      active = false;
+      moved = false;
+    };
+
+    panel.addEventListener("touchstart", onTouchStart, { passive: true });
+    panel.addEventListener("touchmove", onTouchMove, { passive: false });
+    panel.addEventListener("touchend", onTouchEnd, { passive: true });
+    panel.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      if (snapTimer !== undefined) window.clearTimeout(snapTimer);
+      panel.removeEventListener("touchstart", onTouchStart);
+      panel.removeEventListener("touchmove", onTouchMove);
+      panel.removeEventListener("touchend", onTouchEnd);
+      panel.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, []);
 
   // Filters (Combined map filters, Global Search)
   const [filterSeverities, setFilterSeverities] = useState<string[]>([]);
@@ -682,7 +787,7 @@ export default function HomeClient() {
         </button>
 
         {/* ── Operations panel ──────────────────────────── */}
-        <aside className="operations-panel">
+        <aside className="operations-panel" ref={panelRef}>
           {selectedIncidentId && selectedIncident ? (
             <IncidentDetailsDrawer
               incident={selectedIncident}
