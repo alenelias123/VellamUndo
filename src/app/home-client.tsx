@@ -701,8 +701,8 @@ export default function HomeClient() {
                 </div>
               )}
 
-              <div className="signal-pill">
-                <CircleDot size={12} className="text-teal-600 fill-teal-600 animate-pulse shrink-0" />
+              <div className="signal-pill signal-pill--live">
+                <CircleDot size={12} className="text-red-600 fill-red-600 animate-pulse shrink-0" />
                 Live
               </div>
 

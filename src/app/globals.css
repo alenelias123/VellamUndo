@@ -586,6 +586,12 @@ textarea:focus {
   font-weight: 800;
 }
 
+.signal-pill--live {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
 .workspace {
   flex: none;
   height: calc(100dvh - var(--topbar-h) - var(--gpsbar-h));
