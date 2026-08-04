@@ -7,6 +7,31 @@ const defaultTitle = "Vellam Undo | Kerala Flood Alerts, Safer Routes, and Commu
 const defaultDescription =
   "Live flood reporting, road condition updates, safer route planning, relief-center discovery, and emergency help coordination for Kerala.";
 
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl,
+      description: defaultDescription,
+      inLanguage: "en-IN"
+    },
+    {
+      "@type": "WebApplication",
+      name: siteName,
+      url: siteUrl,
+      applicationCategory: "EmergencyService",
+      operatingSystem: "Web",
+      description: defaultDescription,
+      areaServed: {
+        "@type": "State",
+        name: "Kerala"
+      }
+    }
+  ]
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
@@ -81,7 +106,13 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

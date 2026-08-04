@@ -488,8 +488,9 @@ export default function HomeClient() {
           <span className="brand-mark rounded-lg flex items-center justify-center shrink-0">
             <img src="/favicon.png" alt="Vellam Undo" className="brand-mark-img" />
           </span>
-          <div className="leading-tight">
+          <div className="brand-copy">
             <h1>Vellam Undo</h1>
+            <p className="brand-subtitle">Live Flood Alerts and Safer Routes for Kerala</p>
           </div>
         </button>
 
