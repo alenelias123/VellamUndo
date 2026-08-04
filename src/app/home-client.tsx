@@ -179,11 +179,33 @@ export default function HomeClient() {
       if (ws) {
         ws.classList.remove("workspace--dragging");
         if (moved) {
+<<<<<<< Updated upstream
           const { min, max } = getRange();
           const currentTop = clampTop(startTop + (currentY - startY));
           setPanelExpanded(currentTop <= (min + max) / 2);
           const target = currentTop <= (min + max) / 2 ? min : max;
           ws.style.setProperty("--sheet-top", `${target}px`);
+=======
+          const { max } = getRange();
+          const wsH = ws.getBoundingClientRect().height;
+          const mid = wsH * 0.5;
+          const netDelta = currentY - startY;
+          const currentTop = clampTop(startTop + netDelta);
+          // Scrolling up locks the sheet at the half-way mark; pulling it
+          // past half-way expands to full screen. Scrolling down collapses.
+          let target: "collapsed" | "mid" | "expanded";
+          if (netDelta > 0) {
+            target = "collapsed";
+          } else if (currentTop >= mid) {
+            target = "mid";
+          } else {
+            target = "expanded";
+          }
+          setPanelMode(target);
+          const targetTop =
+            target === "expanded" ? "4px" : target === "mid" ? "50%" : `${max}px`;
+          ws.style.setProperty("--sheet-top", targetTop);
+>>>>>>> Stashed changes
           snapTimer = window.setTimeout(() => {
             ws.style.removeProperty("--sheet-top");
             snapTimer = undefined;
