@@ -88,6 +88,7 @@ export function SafeRoutePlanner({
   const lastIncidentsKeyRef = useRef<string>("");
   const rerouteRequestIdRef = useRef<number>(0);
   const cardRef = useRef<HTMLDivElement>(null);
+  const gpsAutofilledRef = useRef(false);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -230,6 +231,17 @@ export function SafeRoutePlanner({
     }
     origin$.clearSuggestions();
   }
+
+  // Auto-fill the source location with the GPS position as soon as the
+  // geolocation data is first fetched.
+  useEffect(() => {
+    if (!userLocation) return;
+    if (gpsAutofilledRef.current) return;
+    if (customOrigin || originQuery.trim()) return;
+    gpsAutofilledRef.current = true;
+    void useGpsAsSource();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLocation]);
 
   async function swapSourceDestination() {
     if (!origin || !selectedDestination) return;
