@@ -1204,6 +1204,12 @@ label {
     grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
     --mobile-sheet-height: clamp(100px, 20dvh, 220px);
+    /* Top edge of the sheet. Collapsed by default; expanded overrides it. */
+    --sheet-top: calc(100% - var(--mobile-sheet-height) - 12px);
+  }
+
+  .workspace--panel-expanded {
+    --sheet-top: 4px;
   }
 
   .map-stage {
@@ -1217,10 +1223,10 @@ label {
     position: absolute;
     left: 12px;
     right: 12px;
+    top: var(--sheet-top);
     bottom: 12px;
+    height: auto;
     z-index: 6;
-    height: var(--mobile-sheet-height);
-    max-height: none;
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 2px;
@@ -1229,10 +1235,8 @@ label {
     background: var(--panel);
     box-shadow: 0 18px 50px rgb(16 32 34 / 26%);
     -webkit-overflow-scrolling: touch;
-  }
-
-  .workspace--panel-expanded .operations-panel {
-    height: calc(100% - 16px);
+    transition: top 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: top;
   }
 
   /* Expand / collapse pill straddling the sheet's top edge */
@@ -1241,8 +1245,8 @@ label {
     position: absolute;
     z-index: 7;
     left: 50%;
+    bottom: calc(100% - var(--sheet-top) - 13px);
     transform: translateX(-50%);
-    bottom: calc(var(--mobile-sheet-height) - 1px);
     align-items: center;
     justify-content: center;
     width: 46px;
@@ -1254,23 +1258,33 @@ label {
     color: var(--teal-dark);
     box-shadow: 0 -4px 14px rgb(16 32 34 / 14%);
     cursor: pointer;
-    transition: background 0.15s;
+    transition:
+      bottom 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+      background 0.15s ease,
+      transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   .operations-panel-toggle:hover {
     background: var(--panel-strong);
   }
 
+  .operations-panel-toggle:active {
+    transform: translateX(-50%) scale(0.9);
+  }
+
   .ops-toggle-icon {
-    transition: transform 0.2s ease;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   .ops-toggle-icon--up {
     transform: rotate(180deg);
   }
 
-  .workspace--panel-expanded .operations-panel-toggle {
-    bottom: calc(100% - 17px);
+  /* While the sheet is dragged it follows the finger with no transition;
+     the release snaps back in with the smooth transition above. */
+  .workspace--dragging .operations-panel,
+  .workspace--dragging .operations-panel-toggle {
+    transition: none;
   }
 
   /* Lift the map's bottom-right controls above the bottom sheet */
