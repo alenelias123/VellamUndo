@@ -1332,6 +1332,23 @@ label {
 }
 
 @media (max-width: 760px) {
+  .route-planner-panel {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .route-results-section {
+    flex: 0 0 auto;
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .route-results-heading {
+    position: static;
+    backdrop-filter: none;
+  }
+
   .topbar {
     position: static;
     gap: 8px;
