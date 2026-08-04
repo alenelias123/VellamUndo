@@ -1212,10 +1212,6 @@ label {
     --sheet-top: 4px;
   }
 
-  .workspace--panel-mid {
-    --sheet-top: 50%;
-  }
-
   .map-stage {
     height: 100%;
     min-height: 0;
@@ -1296,8 +1292,7 @@ label {
     bottom: calc(var(--mobile-sheet-height) + 16px);
   }
 
-  .workspace--panel-expanded .leaflet-bottom,
-  .workspace--panel-mid .leaflet-bottom {
+  .workspace--panel-expanded .leaflet-bottom {
     display: none;
   }
 }
