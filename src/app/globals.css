@@ -1247,13 +1247,15 @@ label {
     z-index: 6;
     overflow-y: auto;
     overflow-x: hidden;
+    overscroll-behavior: contain;
     padding-right: 2px;
     border: 1px solid var(--line-strong);
     border-radius: 14px;
     background: var(--panel);
     box-shadow: 0 18px 50px rgb(16 32 34 / 26%);
     -webkit-overflow-scrolling: touch;
-    transition: top 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+    /* Smooth spring-like snap when the sheet settles on a position. */
+    transition: top 0.42s cubic-bezier(0.25, 1, 0.3, 1);
     will-change: top;
   }
 
@@ -1298,7 +1300,7 @@ label {
     box-shadow: 0 -4px 14px rgb(16 32 34 / 14%);
     cursor: pointer;
     transition:
-      bottom 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+      bottom 0.42s cubic-bezier(0.25, 1, 0.3, 1),
       background 0.15s ease,
       transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
