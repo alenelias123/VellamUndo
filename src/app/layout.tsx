@@ -1,14 +1,74 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://vellamundo.in";
+const siteName = "Vellam Undo";
+const defaultTitle = "Vellam Undo | Kerala Flood Alerts, Safer Routes, and Community Reports";
+const defaultDescription =
+  "Live flood reporting, road condition updates, safer route planning, relief-center discovery, and emergency help coordination for Kerala.";
+
 export const metadata: Metadata = {
-  title: "Vellam Undo",
-  description: "Flood reporting and safer re-navigation for Kerala.",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: defaultTitle,
+    template: `%s | ${siteName}`
+  },
+  description: defaultDescription,
+  applicationName: siteName,
+  keywords: [
+    "Kerala flood alerts",
+    "flood reporting Kerala",
+    "road flooding map",
+    "safe route navigation",
+    "waterlogging updates",
+    "relief centers Kerala",
+    "emergency help requests",
+    "community flood reports"
+  ],
+  authors: [{ name: "Vellam Undo" }],
+  creator: "Vellam Undo",
+  publisher: "Vellam Undo",
+  alternates: {
+    canonical: "/"
+  },
   manifest: "/manifest.json",
   icons: {
     icon: "/favicon.png",
     apple: "/favicon.png"
-  }
+  },
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    siteName,
+    title: defaultTitle,
+    description: defaultDescription,
+    images: [
+      {
+        url: "/favicon.png",
+        width: 1200,
+        height: 1200,
+        alt: "Vellam Undo"
+      }
+    ]
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: defaultTitle,
+    description: defaultDescription,
+    images: ["/favicon.png"]
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1
+    }
+  },
+  category: "emergency"
 };
 
 export const viewport: Viewport = {
