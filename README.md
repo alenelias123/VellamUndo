@@ -1,6 +1,6 @@
 # Vellam Undo
 
-Vellam Undo is a working flood-reporting and re-navigation prototype for Kerala. It adapts the GasUndo-style architecture into a map-first emergency operations interface for:
+Vellam Undo is a working flood-reporting and re-navigation prototype for Kerala. It hsd a map-first emergency operations interface for:
 
 - live flood reports and community verification
 - road status by water level
