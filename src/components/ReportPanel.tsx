@@ -767,7 +767,7 @@ export function ReportPanel({
 
           {/* ── Road / Landmark ────────────────────────────── */}
           <label>
-            Road / River
+            Road
             <input
               value={roadName}
               onChange={(e) => {
