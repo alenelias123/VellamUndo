@@ -149,26 +149,6 @@ export type HelpRequest = {
   createdAt: string;
 };
 
-export type ReliefCenterType =
-  | "relief-camp"
-  | "hospital"
-  | "fire-station"
-  | "police-station"
-  | "supply-point";
-
-export type ReliefCenter = {
-  id: string;
-  name: string;
-  district: string;
-  type: ReliefCenterType;
-  coordinates: Coordinates;
-  address: string;
-  contact: string;
-  capacity: number;
-  occupancy: number;
-  supplies: string[];
-};
-
 export type District = {
   slug: string;
   name: string;
@@ -213,6 +193,5 @@ export type AnalyticsSnapshot = {
   blockedRoads: number;
   openHelpRequests: number;
   criticalHelpRequests: number;
-  reliefBedsAvailable: number;
   averageConfidence: number;
 };

@@ -18,7 +18,7 @@ export async function GET() {
       "/analytics": {
         "get": {
           "summary": "Retrieve disaster analytics",
-          "description": "Fetch high-level statistics like total incident reports, blocked roads, available relief center beds, and help requests.",
+          "description": "Fetch high-level statistics like total incident reports, blocked roads, and help requests.",
           "responses": {
             "200": {
               "description": "Success returning analytics statistics object.",
@@ -34,7 +34,6 @@ export async function GET() {
                           "blockedRoads": { "type": "integer", "example": 3 },
                           "openHelpRequests": { "type": "integer", "example": 8 },
                           "criticalHelpRequests": { "type": "integer", "example": 2 },
-                          "reliefBedsAvailable": { "type": "integer", "example": 240 },
                           "averageConfidence": { "type": "integer", "example": 78 }
                         }
                       }
@@ -267,15 +266,6 @@ export async function GET() {
           },
           "responses": {
             "200": { "description": "Vote counted." }
-          }
-        }
-      },
-      "/relief-centers": {
-        "get": {
-          "summary": "List Relief Centers",
-          "description": "Retrieve all relief camps, emergency hospitals, supply stations, and police dispatch stations.",
-          "responses": {
-            "200": { "description": "Array of relief centers returned." }
           }
         }
       },

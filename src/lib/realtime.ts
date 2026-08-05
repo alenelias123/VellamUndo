@@ -1,7 +1,6 @@
 export type RealtimeChannelName =
   | "flood_reports"
   | "help_requests"
-  | "relief_centers"
   | "volunteer_assignments";
 
 export type RealtimeEvent<TPayload> = {

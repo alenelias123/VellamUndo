@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { demoFloodReports, demoHelpRequests, demoReliefCenters } from "@/lib/demo-data";
+import { demoFloodReports, demoHelpRequests } from "@/lib/demo-data";
 import {
   createHelpRequest,
   type NewHelpRequestInput,
@@ -14,7 +14,6 @@ import type {
   IncidentVerification,
   HelpRequest,
   HelpStatus,
-  ReliefCenter,
   AnalyticsSnapshot,
   SeverityLevel,
   IncidentType,
@@ -52,7 +51,6 @@ const seedIncidents: Incident[] = demoFloodReports.map((report, idx) => ({
 type EmergencyState = {
   incidents: Incident[];
   helpRequests: HelpRequest[];
-  reliefCenters: ReliefCenter[];
 };
 
 const storageKey = "vellam-undo-emergency-incidents-state-v1";
@@ -60,8 +58,7 @@ const queueStorageKey = "vellam-undo-offline-queue-v1";
 
 const initialState: EmergencyState = {
   incidents: seedIncidents,
-  helpRequests: demoHelpRequests,
-  reliefCenters: demoReliefCenters
+  helpRequests: demoHelpRequests
 };
 
 export type OfflineReportPayload = {
@@ -115,8 +112,7 @@ export function useEmergencyStore() {
 
     setState({
       incidents: loadedIncidents,
-      helpRequests: demoHelpRequests,
-      reliefCenters: demoReliefCenters
+      helpRequests: demoHelpRequests
     });
 
     if (savedQueue) {
@@ -249,14 +245,12 @@ export function useEmergencyStore() {
 
     const openHelp = state.helpRequests.filter((r) => r.status !== "completed").length;
     const criticalHelp = state.helpRequests.filter((r) => r.priority === "critical" && r.status !== "completed").length;
-    const beds = state.reliefCenters.reduce((sum, c) => sum + Math.max(0, c.capacity - c.occupancy), 0);
 
     return {
       totalReports,
       blockedRoads,
       openHelpRequests: openHelp,
       criticalHelpRequests: criticalHelp,
-      reliefBedsAvailable: beds,
       averageConfidence: avgConfidence
     };
   }, [state]);
@@ -264,7 +258,6 @@ export function useEmergencyStore() {
   return {
     incidents: state.incidents,
     helpRequests: state.helpRequests,
-    reliefCenters: state.reliefCenters,
     offlineQueue,
     isSyncing,
     analytics,
@@ -619,8 +612,7 @@ export function useEmergencyStore() {
       setOfflineQueue([]);
       setState({
         incidents: seedIncidents,
-        helpRequests: demoHelpRequests,
-        reliefCenters: demoReliefCenters
+        helpRequests: demoHelpRequests
       });
       fetchIncidents();
     }

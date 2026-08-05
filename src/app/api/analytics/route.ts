@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildAnalyticsSnapshot } from "@/lib/analytics";
-import { demoHelpRequests, demoReliefCenters } from "@/lib/demo-data";
+import { demoHelpRequests } from "@/lib/demo-data";
 import { supabase } from "@/lib/supabase";
 import type { Incident } from "@/lib/types";
 
@@ -43,6 +43,6 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    analytics: buildAnalyticsSnapshot(incidents, demoHelpRequests, demoReliefCenters)
+    analytics: buildAnalyticsSnapshot(incidents, demoHelpRequests)
   });
 }

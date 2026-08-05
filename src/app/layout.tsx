@@ -5,7 +5,7 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://vellamundo.in";
 const siteName = "Vellam Undo";
 const defaultTitle = "Vellam Undo | Kerala Flood Alerts, Safer Routes, and Community Reports";
 const defaultDescription =
-  "Live flood reporting, road condition updates, safer route planning, relief-center discovery, and emergency help coordination for Kerala.";
+  "Live flood reporting, road condition updates, safer route planning for Kerala.";
 
 const structuredData = {
   "@context": "https://schema.org",
@@ -46,7 +46,6 @@ export const metadata: Metadata = {
     "road flooding map",
     "safe route navigation",
     "waterlogging updates",
-    "relief centers Kerala",
     "emergency help requests",
     "community flood reports"
   ],
@@ -70,8 +69,8 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/favicon.png",
-        width: 1200,
-        height: 1200,
+        width: 1229,
+        height: 1280,
         alt: "Vellam Undo"
       }
     ]

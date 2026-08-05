@@ -16,14 +16,12 @@ import {
 import { Ban, MapPin, PenLine, X, type LucideIcon } from "lucide-react";
 import { iconSvg } from "@/lib/icons";
 import { helpTypeMeta, priorityMeta } from "@/lib/helpRequests";
-import { reliefCenterTypeMeta } from "@/lib/reliefCenters";
 import { formatRelativeTime, incidentTypeMeta, severityColorMeta } from "@/lib/floodReports";
 import { findBlockagePoint } from "@/lib/routing";
 import type {
   Coordinates,
   Incident,
   HelpRequest,
-  ReliefCenter,
   RouteOption
 } from "@/lib/types";
 
@@ -32,7 +30,6 @@ type FloodMapProps = {
   userLocation?: Coordinates;
   incidents: Incident[];
   helpRequests?: HelpRequest[];
-  reliefCenters?: ReliefCenter[];
   selectedIncidentId?: string;
   activeRoute?: RouteOption;
   routes?: RouteOption[];
@@ -61,7 +58,6 @@ export function FloodMap({
   userLocation,
   incidents,
   helpRequests,
-  reliefCenters,
   selectedIncidentId,
   activeRoute,
   routes = [],
@@ -516,27 +512,6 @@ export function FloodMap({
             </React.Fragment>
           );
         })}
-
-      {/* Render relief centers */}
-      {reliefCenters?.map((centerItem) => {
-        const meta = reliefCenterTypeMeta[centerItem.type];
-        return (
-          <Marker
-            key={centerItem.id}
-            position={toLatLng(centerItem.coordinates)}
-            icon={makeIconMarker(meta.icon, meta.color, "center")}
-          >
-            <Popup>
-              <div className="map-popup">
-                <strong>{centerItem.name}</strong>
-                <span>{meta.label}</span>
-                <span>{Math.max(0, centerItem.capacity - centerItem.occupancy)} spaces available</span>
-                <span>{centerItem.contact}</span>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
 
       {/* Render help requests */}
       {helpRequests

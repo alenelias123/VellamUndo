@@ -26,7 +26,7 @@ type EndpointDoc = {
   summary: string;
   description: string;
   deprecated?: boolean;
-  category: "Analytics" | "Geocoding" | "Incidents" | "Help Requests" | "Relief Centers" | "Routing" | "Legacy Reports";
+  category: "Analytics" | "Geocoding" | "Incidents" | "Help Requests" | "Routing" | "Legacy Reports";
   params?: Array<{ name: string; type: string; required: boolean; description: string; example?: string }>;
   requestBody?: string;
   responseBody: string;
@@ -39,7 +39,7 @@ const endpointData: EndpointDoc[] = [
     method: "GET",
     path: "/api/analytics",
     summary: "Retrieve general statistics and analytics snapshot",
-    description: "Fetches compiled statistics showing total active flood reports, impassable roads, pending rescue help requests, and available relief camp beds.",
+    description: "Fetches compiled statistics showing total active flood reports, impassable roads, and pending rescue help requests.",
     category: "Analytics",
     responseBody: `{
   "analytics": {
@@ -47,7 +47,6 @@ const endpointData: EndpointDoc[] = [
     "blockedRoads": 3,
     "openHelpRequests": 8,
     "criticalHelpRequests": 2,
-    "reliefBedsAvailable": 240,
     "averageConfidence": 78
   }
 }`,
@@ -259,31 +258,6 @@ const endpointData: EndpointDoc[] = [
     curlExample: `curl -X POST http://localhost:3000/api/incidents/incident-8af912/verify \\
   -H "Content-Type: application/json" \\
   -d '{"vote":"water-receding","reporter":"volunteer-john"}'`
-  },
-  {
-    id: "get-relief-centers",
-    method: "GET",
-    path: "/api/relief-centers",
-    summary: "List relief camps and service hubs",
-    description: "Fetches details of emergency medical camps, relief camp shelters, food packaging camps, and fire rescue service stations.",
-    category: "Relief Centers",
-    responseBody: `{
-  "reliefCenters": [
-    {
-      "id": "camp-8a",
-      "name": "Aluva Town Hall Relief Camp",
-      "district": "ernakulam",
-      "type": "relief-camp",
-      "coordinates": { "lat": 10.1092, "lng": 76.3531 },
-      "address": "Town Hall Rd, Aluva, Kerala 683101",
-      "contact": "0484-2624233",
-      "capacity": 400,
-      "occupancy": 220,
-      "supplies": ["Dry rations", "Blankets", "Baby diapers", "Drinking water"]
-    }
-  ]
-}`,
-    curlExample: "curl -X GET http://localhost:3000/api/relief-centers"
   },
   {
     id: "post-route-plan",
@@ -689,7 +663,7 @@ export default function DocsPage() {
         </div>
 
         <div className="docs-menu">
-          {["Analytics", "Geocoding", "Incidents", "Help Requests", "Relief Centers", "Routing", "Legacy Reports"].map(category => {
+          {["Analytics", "Geocoding", "Incidents", "Help Requests", "Routing", "Legacy Reports"].map(category => {
             const list = filteredEndpoints.filter(ep => ep.category === category);
             if (list.length === 0) return null;
             return (
