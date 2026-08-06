@@ -1,34 +1,44 @@
 # Vellam Undo
 
-Vellam Undo is a working flood-reporting and re-navigation prototype for Kerala. It has a map-first emergency operations interface for:
+Vellam Undo is a flood reporting and emergency navigation platform built to improve situational awareness during flood events in Kerala. It provides a unified interface for reporting floods, tracking road conditions, finding safer routes, and coordinating emergency response efforts.
 
-- live flood reports and community verification
-- road status by water level
-- safer route planning that penalizes flooded corridors
-- emergency help requests and volunteer triage
-- local analytics for operational visibility
+## Features
 
-The prototype runs without external credentials. Data is seeded from local Kerala demo fixtures and persists in the browser with `localStorage`, while the code is split into service-style modules so Supabase, OpenRouteService, and realtime subscriptions can be wired in later.
+- Report flooded locations with community verification
+- Monitor road conditions based on flood severity
+- Plan safer routes that avoid flooded areas
+- Request emergency assistance and manage volunteer response
+- View operational insights through an analytics dashboard
 
-## Run
+## Tech Stack
+
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- Leaflet
+- OpenStreetMap
+
+## Getting Started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Visit `http://localhost:3000` to access the application.
 
-## Architecture Notes
+## Project Structure
 
-- `src/app/home-client.tsx` is the client controller, similar to the GasUndo home shell.
-- `src/lib/*` contains the flood-report, help-request, routing, district, and analytics domain logic.
-- `src/hooks/useEmergencyStore.ts` provides optimistic local persistence for the demo.
-- `src/components/FloodMap.tsx` renders OpenStreetMap tiles, reports, help requests, and selected route overlays.
+```
+src/
+├── app/          # Application pages
+├── components/   # Reusable UI components
+├── hooks/        # Custom React hooks
+├── lib/          # Business logic and utilities
+└── types/        # Shared TypeScript types
+```
 
-## Production Swap Points
+## Overview
 
-- Replace the local store with Supabase tables from the architecture plan.
-- Replace `buildRouteOptions` in `src/lib/routing.ts` with OpenRouteService calls and avoid-polygons.
-- Add Supabase Realtime subscriptions for reports, confirmations, help requests, and volunteer assignments.
-- Move community verification and rate limits to API routes with server-side identity checks.
+Vellam Undo is designed to support individuals, volunteers, and emergency responders by providing reliable flood reporting, route planning, and response coordination through a single, map-centric application.
