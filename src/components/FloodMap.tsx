@@ -53,6 +53,20 @@ type FloodMapProps = {
   onPickLocation: (coordinates: Coordinates) => void;
 };
 
+// Incidents with no activity for 72 hours (3 days) render as dimmed markers.
+const STALE_INCIDENT_MS = 3 * 24 * 60 * 60 * 1000;
+
+function lastActivityTime(incident: Incident): number {
+  const candidates = [
+    incident.updatedAt,
+    incident.createdAt,
+    incident.lastReportAt,
+    incident.lastVerifiedAt
+  ].filter(Boolean) as string[];
+  if (candidates.length === 0) return 0;
+  return Math.max(...candidates.map((t) => new Date(t).getTime()));
+}
+
 export function FloodMap({
   center,
   userLocation,
@@ -453,6 +467,7 @@ export function FloodMap({
           const isIncidentOnSelectedRoute = activeRoute?.analysis?.affectedIncidents.some(
             (ai) => ai.id === incident.id
           );
+          const isStale = Date.now() - lastActivityTime(incident) > STALE_INCIDENT_MS;
 
           const hasStretch = incident.floodStartLat && incident.floodStartLng && incident.floodEndLat && incident.floodEndLng;
           const incidentPath =
@@ -482,7 +497,7 @@ export function FloodMap({
               )}
               <Marker
                 position={toLatLng(incident.coordinates)}
-                icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected, isIncidentOnSelectedRoute)}
+                icon={makeIncidentIcon(typeMeta.icon, sevMeta.color, isSelected, isIncidentOnSelectedRoute, isStale)}
                 eventHandlers={{ click: () => onSelectIncident(incident.id) }}
               >
                 <Popup>
@@ -925,7 +940,8 @@ function makeIncidentIcon(
   icon: LucideIcon,
   color: string,
   isSelected: boolean,
-  isIncidentOnSelectedRoute?: boolean
+  isIncidentOnSelectedRoute?: boolean,
+  dimmed = false
 ) {
   const size = isSelected ? 40 : 32;
   const borderSize = isSelected ? "3px" : "2px";
@@ -933,6 +949,7 @@ function makeIncidentIcon(
   const shadow = isIncidentOnSelectedRoute
     ? `box-shadow:0 0 12px 6px ${color};`
     : `box-shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);`;
+  const fade = dimmed && !isSelected ? "opacity:0.45;filter:grayscale(0.45);" : "";
 
   return L.divIcon({
     className: "vu-incident-icon",
@@ -943,6 +960,7 @@ function makeIncidentIcon(
       width:${size}px;height:${size}px;
       display:flex;align-items:center;justify-content:center;
       ${shadow}
+      ${fade}
       transform:scale(${isSelected ? 1.15 : 1.0});
       transition:all 0.2s ease-out;
     ">${iconSvg(icon, { size: iconSize, color })}</div>`,
