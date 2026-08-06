@@ -839,7 +839,10 @@ export default function HomeClient() {
           </div>
 
           <div className="map-summary">
-            <Metric label="Incidents Displayed" value={filteredIncidents.length} />
+            <Metric
+              label="Incidents Displayed"
+              value={filteredIncidents.filter((inc) => inc.status !== "archived").length}
+            />
           </div>
         </section>
 
