@@ -136,7 +136,7 @@ export async function GET(request: Request) {
   const q = searchParams.get("q")?.trim().toLowerCase();
 
   try {
-    // 1. Run Auto-Archive self-healing check
+    // 1. Run verification self-healing check
     const { data: activeIncidents } = await supabase
       .from("incidents")
       .select("id, status, created_at, updated_at, last_report_at, last_verified_at, needs_verification")
@@ -144,7 +144,9 @@ export async function GET(request: Request) {
 
     const now = new Date();
     if (activeIncidents && activeIncidents.length > 0) {
-      const toArchiveIds: string[] = [];
+      // Stale incidents are kept on the map (rendered dimmed after 3 days in
+      // FloodMap) rather than auto-archived, so only the verification
+      // self-healing runs here.
       const toVerifyIds: string[] = [];
       const auditLogsToInsert: any[] = [];
 
@@ -158,22 +160,11 @@ export async function GET(request: Request) {
         const lastActivity = new Date(Math.max(...dates.map(d => d.getTime())));
         const elapsedHours = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60);
 
-        if (elapsedHours >= 48) {
-          toArchiveIds.push(inc.id);
-          auditLogsToInsert.push({
-            incident_id: inc.id,
-            user_id: "System (Auto-Archive)",
-            action: "Archive",
-            target_table: "incidents",
-            target_id: inc.id,
-            previous_value: { status: inc.status },
-            new_value: { status: "archived" }
-          });
-        } else if (elapsedHours >= 24 && !inc.needs_verification) {
+        if (elapsedHours >= 24 && !inc.needs_verification) {
           toVerifyIds.push(inc.id);
           auditLogsToInsert.push({
             incident_id: inc.id,
-            user_id: "System (Auto-Archive)",
+            user_id: "System (Auto-Verify)",
             action: "Update",
             target_table: "incidents",
             target_id: inc.id,
@@ -185,15 +176,6 @@ export async function GET(request: Request) {
 
       // Execute batch updates & inserts in parallel
       const dbPromises: any[] = [];
-
-      if (toArchiveIds.length > 0) {
-        dbPromises.push(
-          supabase
-            .from("incidents")
-            .update({ status: "archived", archived_at: now.toISOString(), needs_verification: false })
-            .in("id", toArchiveIds)
-        );
-      }
 
       if (toVerifyIds.length > 0) {
         dbPromises.push(
